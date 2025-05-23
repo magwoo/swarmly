@@ -1,0 +1,5 @@
+FROM rust:1.86-alpine3.20 AS builder
+WORKDIR /app
+RUN apk add --no-cache build-base cmake
+RUN cargo install cargo-watch
+ENTRYPOINT ["cargo", "watch", "-x", "run"]
