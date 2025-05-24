@@ -1,7 +1,8 @@
 use pingora::prelude::*;
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 use tokio::sync::RwLock;
 
+use crate::docker::Network;
 use crate::gateway::Gateway;
 
 mod docker;
@@ -11,12 +12,12 @@ mod me;
 fn main() {
     let mut server = Server::new(None).unwrap();
 
-    let upstreams = Arc::new(RwLock::new(HashMap::new()));
+    let network = Arc::new(RwLock::new(Network::empty()));
 
-    let mut gateway = http_proxy_service(&server.configuration, Gateway(upstreams.clone()));
+    let mut gateway = http_proxy_service(&server.configuration, Gateway(network.clone()));
     gateway.add_tcp("0.0.0.0:80");
 
-    let me_background = background_service("me", me::MeBackground(upstreams.clone()));
+    let me_background = background_service("me", me::MeBackground(network));
 
     server.add_service(gateway);
     server.add_service(me_background);

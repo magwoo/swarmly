@@ -1,10 +1,12 @@
 use pingora::prelude::*;
-use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+use crate::docker::Network;
+
 #[derive(Debug)]
-pub struct Gateway(pub Arc<RwLock<HashMap<String, String>>>);
+pub struct Gateway(pub Arc<RwLock<Network>>);
 
 #[async_trait::async_trait]
 impl ProxyHttp for Gateway {
@@ -27,13 +29,15 @@ impl ProxyHttp for Gateway {
         };
 
         let upstreams = self.0.read().await;
-        let upstream = match upstreams.get(host) {
-            Some(upstream) => upstream,
-            None => {
+        let ip = match upstreams.search(host) {
+            Some(upstream) if !upstream.is_empty() => upstream[0],
+            _ => {
                 session.respond_error(404).await.unwrap();
                 return Ok(true);
             }
         };
+
+        let upstream = SocketAddr::new(ip, 80);
 
         *ctx = Some(HttpPeer::new(upstream, false, String::new()));
 
@@ -54,13 +58,5 @@ impl ProxyHttp for Gateway {
         println!("{:?} -> {}", client_addr, upstream);
 
         Ok(Box::new(upstream))
-    }
-}
-
-impl Default for Gateway {
-    fn default() -> Self {
-        let upstreams = [("app.ru".to_owned(), "127.0.0.1:8080".to_owned())];
-
-        Self(Arc::new(RwLock::new(HashMap::from(upstreams))))
     }
 }

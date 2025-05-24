@@ -1,14 +1,12 @@
-use bollard::query_parameters::{InspectContainerOptions, InspectNetworkOptions};
 use pingora::server::ShutdownWatch;
 use pingora::services::background::BackgroundService;
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 
 use crate::docker::Network;
 
-pub struct MeBackground(pub Arc<RwLock<HashMap<String, String>>>);
+pub struct MeBackground(pub Arc<RwLock<Network>>);
 
 #[async_trait::async_trait]
 impl BackgroundService for MeBackground {
@@ -18,7 +16,9 @@ impl BackgroundService for MeBackground {
 
             let network = Network::get_mine().await.unwrap();
 
-            println!("{:#?}", network);
+            let mut upstreams = self.0.write().await;
+
+            *upstreams = network;
         }
     }
 }

@@ -1,7 +1,7 @@
 use anyhow::Context;
 use bollard::Docker;
 use bollard::query_parameters::{InspectContainerOptions, InspectNetworkOptions};
-use bollard::secret::{ContainerInspectResponse, EndpointSettings};
+use bollard::secret::EndpointSettings;
 use std::collections::{HashMap, HashSet};
 use std::net::IpAddr;
 use std::str::FromStr;
@@ -21,13 +21,17 @@ pub struct Container {
     address: IpAddr,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Network {
     containers_by_domain: HashMap<String, Vec<Container>>,
     containers: Vec<Container>,
 }
 
 impl Network {
+    pub fn empty() -> Self {
+        Self::default()
+    }
+
     pub async fn get_mine() -> anyhow::Result<Self> {
         let network_ids = get_mine_networks()
             .await
@@ -82,6 +86,12 @@ impl Network {
             containers,
         })
     }
+
+    pub fn search(&self, domain: &str) -> Option<Vec<IpAddr>> {
+        self.containers_by_domain
+            .get(domain)
+            .map(|c| c.iter().map(|c| c.address).collect())
+    }
 }
 
 impl Container {
@@ -117,84 +127,8 @@ impl Container {
         Ok(())
     }
 
-    pub async fn from_name(name: &str) -> anyhow::Result<Self> {
-        let docker = get_or_init_docker_provider()?;
-
-        let container = docker
-            .inspect_container(name, None::<InspectContainerOptions>)
-            .await
-            .context("failed to inspect container")?;
-
-        Self::from_inspect(container)
-    }
-
-    pub fn from_inspect(inspect: ContainerInspectResponse) -> anyhow::Result<Self> {
-        let id = inspect.id.context("container does not has an id")?;
-        let address = inspect
-            .network_settings
-            .context("container does not has any network")?
-            .ip_address
-            .context("container does not has any ip address")?;
-
-        let address = address
-            .chars()
-            .take_while(|c| *c == '/')
-            .collect::<String>();
-
-        let address = IpAddr::from_str(&address)
-            .with_context(|| format!("failed to parse address: {}", address))?;
-
-        let labels = inspect
-            .config
-            .context("container does not has config")?
-            .labels
-            .unwrap_or_else(HashMap::default);
-
-        let config = Config::from_labels(labels).context("failed to parse labels as config")?;
-
-        Ok(Self {
-            id,
-            config,
-            address,
-        })
-    }
-
     pub fn get_config(&self) -> &Config {
         &self.config
-    }
-
-    pub async fn get_me() -> anyhow::Result<Self> {
-        let hostname = std::env::var("HOSTNAME").context("missing hostname env var")?;
-        let docker = get_or_init_docker_provider()?;
-
-        let container = docker
-            .inspect_container(&hostname, None::<InspectContainerOptions>)
-            .await
-            .context("failed to get container")?;
-
-        let id = container.id.context("container does not has an id")?;
-        let address = container
-            .network_settings
-            .context("container does not has any network")?
-            .ip_address
-            .context("container does not has any ip address")?;
-
-        let address = IpAddr::from_str(&address)
-            .with_context(|| format!("failed to parse address: {}", address))?;
-
-        let labels = container
-            .config
-            .context("container does not has config")?
-            .labels
-            .unwrap_or_else(HashMap::default);
-
-        let config = Config::from_labels(labels).context("failed to parse labels as config")?;
-
-        Ok(Self {
-            id,
-            config,
-            address,
-        })
     }
 }
 
@@ -223,7 +157,9 @@ fn get_or_init_docker_provider<'a>() -> anyhow::Result<&'a Docker> {
     let instance =
         Docker::connect_with_socket_defaults().context("failed to connect docker socket")?;
 
-    DOCKER_PROVIDER.set(instance);
+    DOCKER_PROVIDER
+        .set(instance)
+        .expect("instance must be not set");
 
     Ok(DOCKER_PROVIDER.get().unwrap())
 }
