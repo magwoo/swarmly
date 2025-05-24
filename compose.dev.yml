@@ -1,7 +1,8 @@
 services:
   proxy:
     container_name: swarmly-proxy
-    build: ./docker/Dockerfile.dev
+    build:
+      dockerfile: ./docker/Dockerfile.dev
     ports:
       - 80:80
     volumes:

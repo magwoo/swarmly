@@ -3,22 +3,25 @@ use bollard::Docker;
 use bollard::query_parameters::{InspectContainerOptions, InspectNetworkOptions};
 use bollard::secret::{ContainerInspectResponse, EndpointSettings};
 use std::collections::{HashMap, HashSet};
-use std::net::SocketAddr;
+use std::net::IpAddr;
 use std::str::FromStr;
 use std::sync::OnceLock;
 
 static DOCKER_PROVIDER: OnceLock<Docker> = OnceLock::new();
 
+#[derive(Debug, Default, Clone)]
 pub struct Config {
     domains: Vec<String>,
 }
 
+#[derive(Debug, Clone)]
 pub struct Container {
     id: String,
     config: Config,
-    address: SocketAddr,
+    address: IpAddr,
 }
 
+#[derive(Debug)]
 pub struct Network {
     containers_by_domain: HashMap<String, Vec<Container>>,
     containers: Vec<Container>,
@@ -35,7 +38,7 @@ impl Network {
 
         let docker = get_or_init_docker_provider()?;
 
-        let mut container_names = HashSet::new();
+        let mut containers = Vec::new();
 
         for id in network_ids {
             let network = docker
@@ -43,31 +46,77 @@ impl Network {
                 .await
                 .with_context(|| format!("failed to get {id} network"))?;
 
-            network
+            containers = network
                 .containers
                 .unwrap_or_else(HashMap::new)
                 .into_values()
-                .filter_map(|c| c.name)
-                .for_each(|name| {
-                    container_names.insert(name);
-                });
+                .filter_map(|c| c.name.zip(c.ipv4_address))
+                .map(|(n, a)| Container::new(n, &a))
+                .collect::<anyhow::Result<HashSet<_>>>()
+                .with_context(|| format!("failed to parse network {id:?}"))?
+                .into_iter()
+                .collect::<Vec<_>>();
         }
 
-        let mut containers = Vec::with_capacity(container_names.len());
+        let mut containers_by_domain = HashMap::<String, Vec<_>>::new();
 
-        for name in container_names {
-            containers.push(
-                Container::from_name(name.as_str())
-                    .await
-                    .with_context(|| format!("failed to get container {name}")),
-            );
+        for container in containers.iter_mut() {
+            container.load_config().await.with_context(|| {
+                format!("failed to load config for container {:?}", container.id)
+            })?;
+
+            let domain = match container.get_config().domains().iter().next() {
+                Some(domain) => domain.as_str(),
+                None => continue,
+            };
+
+            if let Some(entry) = containers_by_domain.get_mut(domain) {
+                entry.push(container.clone());
+            } else {
+                containers_by_domain.insert(domain.to_owned(), vec![container.clone()]);
+            }
         }
 
-        unimplemented!()
+        Ok(Self {
+            containers_by_domain,
+            containers,
+        })
     }
 }
 
 impl Container {
+    pub fn new(id: String, addr: &str) -> anyhow::Result<Self> {
+        let addr = addr.chars().take_while(|c| *c != '/').collect::<String>();
+
+        let address = IpAddr::from_str(&addr)
+            .with_context(|| format!("failed to parse address {:?}", addr))?;
+
+        Ok(Self {
+            id,
+            config: Config::default(),
+            address,
+        })
+    }
+
+    pub async fn load_config(&mut self) -> anyhow::Result<()> {
+        let docker = get_or_init_docker_provider()?;
+
+        let inspect = docker
+            .inspect_container(&self.id, None::<InspectContainerOptions>)
+            .await
+            .context("failed to inspect container")?;
+
+        let labels = inspect
+            .config
+            .context("container does not has config")?
+            .labels
+            .unwrap_or_else(HashMap::default);
+
+        self.config = Config::from_labels(labels).context("failed to parse labels as config")?;
+
+        Ok(())
+    }
+
     pub async fn from_name(name: &str) -> anyhow::Result<Self> {
         let docker = get_or_init_docker_provider()?;
 
@@ -87,7 +136,12 @@ impl Container {
             .ip_address
             .context("container does not has any ip address")?;
 
-        let address = SocketAddr::from_str(&address)
+        let address = address
+            .chars()
+            .take_while(|c| *c == '/')
+            .collect::<String>();
+
+        let address = IpAddr::from_str(&address)
             .with_context(|| format!("failed to parse address: {}", address))?;
 
         let labels = inspect
@@ -103,6 +157,10 @@ impl Container {
             config,
             address,
         })
+    }
+
+    pub fn get_config(&self) -> &Config {
+        &self.config
     }
 
     pub async fn get_me() -> anyhow::Result<Self> {
@@ -121,7 +179,7 @@ impl Container {
             .ip_address
             .context("container does not has any ip address")?;
 
-        let address = SocketAddr::from_str(&address)
+        let address = IpAddr::from_str(&address)
             .with_context(|| format!("failed to parse address: {}", address))?;
 
         let labels = container
@@ -150,6 +208,10 @@ impl Config {
         }
 
         Ok(Self { domains })
+    }
+
+    pub fn domains(&self) -> &[String] {
+        self.domains.as_slice()
     }
 }
 
@@ -185,3 +247,17 @@ async fn get_mine_networks() -> anyhow::Result<Vec<EndpointSettings>> {
 
     Ok(networks)
 }
+
+impl std::hash::Hash for Container {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        state.write(self.id.as_bytes());
+    }
+}
+
+impl PartialEq for Container {
+    fn eq(&self, other: &Self) -> bool {
+        self.id.eq(&other.id)
+    }
+}
+
+impl Eq for Container {}
