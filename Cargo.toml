@@ -7,5 +7,5 @@ edition = "2024"
 anyhow = "1.0.98"
 async-trait = "0.1.88"
 bollard = "0.19.0"
-pingora = { version = "0.5.0", features = ["proxy"] }
+pingora = { version = "0.5.0", features = ["lb", "proxy"] }
 tokio = { version = "1.45.0", features = ["time", "macros", "net", "rt-multi-thread"] }
