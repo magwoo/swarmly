@@ -3,10 +3,10 @@ WORKDIR /build
 
 RUN apk add --no-cache build-base cmake
 COPY Cargo.* ./
-RUN mkdir src && echo "fn main() {}" >> src/main.rs
+RUN mkdir src && echo "fn main() {println!(\"Hello World!\")}" >> src/main.rs
 RUN cargo build -r
 COPY . .
-RUN cargo build -r
+RUN touch src/main.rs && cargo build -r
 
 FROM alpine:3.20 AS runner
 WORKDIR /app
