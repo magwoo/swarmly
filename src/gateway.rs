@@ -1,16 +1,15 @@
+use pingora::lb::selection::RoundRobin;
 use pingora::prelude::*;
-use std::net::SocketAddr;
+use pingora::protocols::l4::socket::SocketAddr;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::docker::Network;
-
-#[derive(Debug)]
-pub struct Gateway(pub Arc<RwLock<Network>>);
+pub struct Gateway(pub Arc<RwLock<HashMap<String, LoadBalancer<RoundRobin>>>>);
 
 #[async_trait::async_trait]
 impl ProxyHttp for Gateway {
-    type CTX = Option<HttpPeer>;
+    type CTX = Option<SocketAddr>;
 
     fn new_ctx(&self) -> Self::CTX {
         None
@@ -20,26 +19,30 @@ impl ProxyHttp for Gateway {
     where
         Self::CTX: Send + Sync,
     {
-        let host = match session.get_header("Host").and_then(|h| h.to_str().ok()) {
-            Some(host) => host,
+        let domain = match session.get_header("Host").and_then(|h| h.to_str().ok()) {
+            Some(domain) => domain,
             None => {
-                session.respond_error(404).await.unwrap();
+                session.respond_error(404).await?;
                 return Ok(true);
             }
         };
 
         let upstreams = self.0.read().await;
-        let ip = match upstreams.search(host) {
-            Some(upstream) if !upstream.is_empty() => upstream[0],
+        let backend = match upstreams.get(domain) {
+            Some(lb) => match lb.select(b"", 9) {
+                Some(backend) => backend,
+                None => {
+                    session.respond_error(502).await?;
+                    return Ok(true);
+                }
+            },
             _ => {
-                session.respond_error(404).await.unwrap();
+                session.respond_error(404).await?;
                 return Ok(true);
             }
         };
 
-        let upstream = SocketAddr::new(ip, 80);
-
-        *ctx = Some(HttpPeer::new(upstream, false, String::new()));
+        *ctx = Some(backend.addr);
 
         Ok(false)
     }
@@ -49,7 +52,7 @@ impl ProxyHttp for Gateway {
         session: &mut Session,
         ctx: &mut Self::CTX,
     ) -> Result<Box<HttpPeer>> {
-        let upstream = ctx.clone().unwrap();
+        let upstream = ctx.as_ref().unwrap();
         let client_addr = session
             .downstream_session
             .client_addr()
@@ -57,6 +60,6 @@ impl ProxyHttp for Gateway {
 
         println!("{:?} -> {}", client_addr, upstream);
 
-        Ok(Box::new(upstream))
+        Ok(Box::new(HttpPeer::new(upstream, false, String::new())))
     }
 }

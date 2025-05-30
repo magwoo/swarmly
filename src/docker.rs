@@ -3,7 +3,7 @@ use bollard::Docker;
 use bollard::query_parameters::{InspectContainerOptions, InspectNetworkOptions};
 use bollard::secret::EndpointSettings;
 use std::collections::{HashMap, HashSet};
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
 use std::sync::OnceLock;
 
@@ -30,6 +30,10 @@ pub struct Network {
 impl Network {
     pub fn empty() -> Self {
         Self::default()
+    }
+
+    pub fn get_containers_by_domain(&self) -> HashMap<String, Vec<Container>> {
+        self.containers_by_domain.clone()
     }
 
     pub async fn get_mine() -> anyhow::Result<Self> {
@@ -106,6 +110,10 @@ impl Container {
             config: Config::default(),
             address,
         })
+    }
+
+    pub fn get_addr(&self) -> SocketAddr {
+        SocketAddr::new(self.address, 80)
     }
 
     pub async fn load_config(&mut self) -> anyhow::Result<()> {
