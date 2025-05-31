@@ -1,9 +1,9 @@
 FROM rust:1.86-alpine3.20 AS builder
 WORKDIR /build
 
-RUN apk add --no-cache build-base cmake
+RUN apk add --no-cache build-base cmake perl
 COPY Cargo.* ./
-RUN mkdir src && echo "fn main() {println!(\"Hello World!\")}" >> src/main.rs
+RUN mkdir src && echo "fn main() {}" >> src/main.rs
 RUN cargo build -r
 COPY . .
 RUN touch src/main.rs && cargo build -r

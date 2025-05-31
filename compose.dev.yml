@@ -5,6 +5,7 @@ services:
       dockerfile: ./docker/Dockerfile.dev
     ports:
       - 80:80
+      - 443:443
     volumes:
       - ./:/app
       - cargo-cache:/usr/local/cargo

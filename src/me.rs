@@ -24,15 +24,20 @@ impl BackgroundService for MeBackground {
 
             let network = Network::get_mine().await.unwrap();
 
-            let mut upstreams = self.0.write().await;
+            let mut upstreams = HashMap::default();
 
             for (domain, containers) in network.get_containers_by_domain() {
                 let backends = Backends::new(Box::new(PingDiscovery::new(containers)));
-                let load_balancer = LoadBalancer::from_backends(backends);
+                let mut load_balancer = LoadBalancer::from_backends(backends);
                 load_balancer.update().await.unwrap();
+                load_balancer.update_frequency = Some(std::time::Duration::from_secs(5));
 
                 upstreams.insert(domain, load_balancer);
             }
+
+            *self.0.write().await = upstreams;
+
+            tokio::time::sleep(Duration::from_secs(9)).await;
         }
     }
 }
