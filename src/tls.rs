@@ -17,7 +17,7 @@ impl TlsAccept for TlsResolver {
             ssl.servername(NameType::HOST_NAME)
         );
 
-        if let Some(domain) = ssl.servername(NameType::HOST_NAME) {
+        if ssl.servername(NameType::HOST_NAME).is_some() {
             let crt = X509::from_pem(DEV_CRT).unwrap();
             ssl.set_certificate(&crt).unwrap();
 

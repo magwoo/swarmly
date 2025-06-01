@@ -3,17 +3,29 @@ use bollard::Docker;
 use bollard::query_parameters::{InspectContainerOptions, InspectNetworkOptions};
 use std::collections::{BTreeSet, HashMap};
 use std::net::SocketAddr;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 use self::container::Container;
-use super::ConfigProvider;
+use super::{ConfigProvider, Value};
 
 mod container;
 
+#[derive(Clone)]
 pub struct DockerConfig {
     client: Docker,
+    last: Arc<RwLock<Option<Value>>>,
 }
 
 impl DockerConfig {
+    pub fn new() -> anyhow::Result<Self> {
+        let client =
+            Docker::connect_with_socket_defaults().context("failed to connect to docker")?;
+        let last = Arc::new(RwLock::new(None));
+
+        Ok(Self { client, last })
+    }
+
     async fn get_current_networks(&self) -> anyhow::Result<Vec<String>> {
         let hostname = std::env::var("HOSTNAME").context("missing hostname env var")?;
 
@@ -79,7 +91,11 @@ impl DockerConfig {
 }
 
 impl ConfigProvider for DockerConfig {
-    async fn update(&self) -> anyhow::Result<HashMap<String, Vec<SocketAddr>>> {
+    async fn get_last(&self) -> Option<Value> {
+        self.last.read().await.clone()
+    }
+
+    async fn update(&self) -> anyhow::Result<Value> {
         let network_ids = self
             .get_current_networks()
             .await
@@ -101,6 +117,6 @@ impl ConfigProvider for DockerConfig {
             });
         });
 
-        Ok(result)
+        Ok(result.into_iter().collect())
     }
 }

@@ -1,31 +1,37 @@
-use pingora::listeners::tls::TlsSettings;
+use config::ConfigRefresher;
+use config::provider::docker::DockerConfig;
 use pingora::prelude::*;
-use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::RwLock;
+
+use self::proxy::Gateway;
+use self::proxy::SwarmProxy;
 
 mod config;
-mod docker;
 mod proxy;
 mod tls;
 
 fn main() {
-    // let mut server = Server::new(None).unwrap();
+    let mut server = Server::new(None).unwrap();
 
-    // let domains = Arc::new(RwLock::new(HashMap::default()));
+    let gateway = Gateway::default();
+    let config_provider = DockerConfig::new().unwrap();
 
-    // let mut gateway = http_proxy_service(&server.configuration, Gateway(domains.clone()));
-    // gateway.add_tcp("0.0.0.0:80");
+    let proxy = SwarmProxy::new(gateway.clone());
+    let mut proxy_service = http_proxy_service(&server.configuration, proxy);
+
+    proxy_service.add_tcp("0.0.0.0:80");
+
+    server.add_service(proxy_service);
+
+    let config_refresher = ConfigRefresher::new(config_provider, gateway);
+    let config_service = background_service("config refresher", config_refresher);
+
+    server.add_service(config_service);
+
     // gateway.add_tls_with_settings(
     //     "0.0.0.0:443",
     //     None,
     //     TlsSettings::with_callbacks(Box::new(tls::TlsResolver)).unwrap(),
     // );
 
-    // let me_background = background_service("me", me::MeBackground(domains));
-
-    // server.add_service(gateway);
-    // server.add_service(me_background);
-
-    // server.run_forever()
+    server.run_forever()
 }

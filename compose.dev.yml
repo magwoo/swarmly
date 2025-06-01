@@ -1,6 +1,5 @@
 services:
   proxy:
-    container_name: swarmly-proxy-dev
     build:
       dockerfile: ./docker/Dockerfile.dev
     ports:
@@ -12,10 +11,11 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
 
   api:
-    container_name: swarmly-api-dev
     image: magwoo/helloworld:latest
     labels:
       - proxy.domain=app.ru
+    deploy:
+      replicas: 10
 
 volumes:
   cargo-cache:

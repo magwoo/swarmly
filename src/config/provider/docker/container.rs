@@ -46,7 +46,7 @@ impl Container {
     }
 
     pub fn get_port(&self) -> Option<u16> {
-        self.config.as_ref().map(|c| c.port).flatten()
+        self.config.as_ref().and_then(|c| c.port)
     }
 
     pub async fn load_config(&mut self, client: &Docker) -> anyhow::Result<bool> {
@@ -102,7 +102,7 @@ impl PartialEq for Container {
 
 impl PartialOrd for Container {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.id.partial_cmp(&other.id)
+        Some(self.cmp(other))
     }
 }
 
