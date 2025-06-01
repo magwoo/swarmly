@@ -15,7 +15,7 @@ services:
     labels:
       - proxy.domain=app.ru
     deploy:
-      replicas: 10
+      replicas: 3
 
 volumes:
   cargo-cache:

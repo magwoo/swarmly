@@ -1,6 +1,7 @@
 use config::ConfigRefresher;
 use config::provider::docker::DockerConfig;
 use pingora::prelude::*;
+use tls::TlsResolver;
 
 use self::proxy::Gateway;
 use self::proxy::SwarmProxy;
@@ -14,11 +15,13 @@ fn main() {
 
     let gateway = Gateway::default();
     let config_provider = DockerConfig::new().unwrap();
+    let tls_resolver = TlsResolver::new(config_provider.clone());
 
     let proxy = SwarmProxy::new(gateway.clone());
     let mut proxy_service = http_proxy_service(&server.configuration, proxy);
 
     proxy_service.add_tcp("0.0.0.0:80");
+    proxy_service.add_tls_with_settings("0.0.0.0:443", None, tls_resolver.into_tls_settings());
 
     server.add_service(proxy_service);
 

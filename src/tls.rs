@@ -1,16 +1,43 @@
 use pingora::listeners::TlsAccept;
+use pingora::listeners::tls::TlsSettings;
 use pingora::protocols::tls::TlsRef;
 use pingora::tls::pkey::PKey;
 use pingora::tls::ssl::NameType;
 use pingora::tls::x509::X509;
 
+use self::storage::TlsStorage;
+use crate::config::provider::ConfigProvider;
+
+mod storage;
+
 static DEV_CRT: &[u8] = include_bytes!("../docker/dev.crt");
 static DEV_KEY: &[u8] = include_bytes!("../docker/dev.key");
 
-pub struct TlsResolver;
+pub struct TlsResolver<P> {
+    provider: P,
+    storage: TlsStorage,
+}
+
+impl<P: ConfigProvider + Send + Sync + 'static> TlsResolver<P> {
+    pub fn new(provider: P) -> Self {
+        let storage = TlsStorage::default();
+
+        Self { provider, storage }
+    }
+
+    pub fn into_tls_settings(self) -> TlsSettings {
+        let callback = Box::new(self);
+        let mut settings =
+            TlsSettings::with_callbacks(callback).expect("failed to create tls settings");
+
+        settings.enable_h2();
+
+        settings
+    }
+}
 
 #[async_trait::async_trait]
-impl TlsAccept for TlsResolver {
+impl<P: ConfigProvider + Send + Sync> TlsAccept for TlsResolver<P> {
     async fn certificate_callback(&self, ssl: &mut TlsRef) -> () {
         println!(
             "called tls resolver, servername: {:?}",

@@ -36,8 +36,6 @@ impl<P: ConfigProvider + Send + Sync> BackgroundService for ConfigRefresher<P> {
                 }
             };
 
-            println!("config updated: {:#?}", upstreams);
-
             self.gateway.update(upstreams).await;
 
             tokio::time::sleep(Duration::from_secs(10)).await;

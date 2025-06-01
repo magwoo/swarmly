@@ -6,7 +6,7 @@ pub mod docker;
 type Value = Vec<(String, Vec<SocketAddr>)>;
 
 pub trait ConfigProvider {
-    fn get_last(&self) -> impl Future<Output = Option<Value>>;
+    async fn update_callback(&self, callback: impl Fn(&Value) + Send + Sync + 'static);
 
     fn update(&self)
     -> impl Future<Output = anyhow::Result<Vec<(String, Vec<SocketAddr>)>>> + Send;

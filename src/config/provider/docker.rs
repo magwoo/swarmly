@@ -11,19 +11,21 @@ use super::{ConfigProvider, Value};
 
 mod container;
 
+type Callback = dyn Fn(&Value) + Send + Sync + 'static;
+
 #[derive(Clone)]
 pub struct DockerConfig {
     client: Docker,
-    last: Arc<RwLock<Option<Value>>>,
+    callbacks: Arc<RwLock<Vec<Box<Callback>>>>,
 }
 
 impl DockerConfig {
     pub fn new() -> anyhow::Result<Self> {
         let client =
             Docker::connect_with_socket_defaults().context("failed to connect to docker")?;
-        let last = Arc::new(RwLock::new(None));
+        let callbacks = Arc::new(RwLock::new(Vec::default()));
 
-        Ok(Self { client, last })
+        Ok(Self { client, callbacks })
     }
 
     async fn get_current_networks(&self) -> anyhow::Result<Vec<String>> {
@@ -91,8 +93,10 @@ impl DockerConfig {
 }
 
 impl ConfigProvider for DockerConfig {
-    async fn get_last(&self) -> Option<Value> {
-        self.last.read().await.clone()
+    async fn update_callback(&self, callback: impl Fn(&Value) + Send + Sync + 'static) {
+        let mut callbacks = self.callbacks.write().await;
+
+        callbacks.push(Box::new(callback));
     }
 
     async fn update(&self) -> anyhow::Result<Value> {
@@ -117,6 +121,12 @@ impl ConfigProvider for DockerConfig {
             });
         });
 
-        Ok(result.into_iter().collect())
+        let value = result.into_iter().collect();
+
+        self.callbacks.read().await.iter().for_each(|c| {
+            c(&value);
+        });
+
+        Ok(value)
     }
 }

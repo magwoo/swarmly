@@ -30,7 +30,12 @@ impl ProxyHttp for SwarmProxy {
     where
         Self::CTX: Send + Sync,
     {
-        let domain = match session.get_header("Host").and_then(|h| h.to_str().ok()) {
+        let domain = session
+            .get_header("host")
+            .and_then(|h| h.to_str().ok())
+            .or_else(|| session.req_header().uri.host());
+
+        let domain = match domain {
             Some(host) => host.trim(),
             None => {
                 session.respond_error(400).await?;
