@@ -62,9 +62,9 @@ impl ProxyHttp for SwarmProxy {
         ctx: &mut Self::CTX,
     ) -> Result<Box<HttpPeer>> {
         let upstream = ctx.as_ref().expect("upstream must be selected");
-        let downstream = session.downstream_session.client_addr();
+        let uri = &session.req_header().uri;
 
-        println!("{:?} -> {}", downstream, upstream);
+        println!("{} -> {}", uri, upstream);
 
         Ok(Box::new(HttpPeer::new(upstream, false, String::default())))
     }
