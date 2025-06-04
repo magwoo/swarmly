@@ -1,3 +1,4 @@
+use acme_lib::DirectoryUrl;
 use config::ConfigRefresher;
 use config::provider::docker::DockerConfig;
 use pingora::prelude::*;
@@ -15,7 +16,12 @@ fn main() {
 
     let gateway = Gateway::default();
     let config_provider = DockerConfig::new().unwrap();
-    let tls_resolver = TlsResolver::new(config_provider.clone());
+    let tls_resolver = TlsResolver::new(
+        config_provider.clone(),
+        "test@mail.ru",
+        DirectoryUrl::LetsEncryptStaging,
+    )
+    .unwrap();
 
     let proxy = SwarmProxy::new(gateway.clone());
     let mut proxy_service = http_proxy_service(&server.configuration, proxy);

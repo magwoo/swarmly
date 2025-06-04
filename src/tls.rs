@@ -1,3 +1,5 @@
+use acme_lib::DirectoryUrl;
+use anyhow::Context;
 use pingora::listeners::TlsAccept;
 use pingora::listeners::tls::TlsSettings;
 use pingora::protocols::tls::TlsRef;
@@ -5,24 +7,37 @@ use pingora::tls::pkey::PKey;
 use pingora::tls::ssl::NameType;
 use pingora::tls::x509::X509;
 
+use self::acme::AcmeResolver;
 use self::storage::TlsStorage;
 use crate::config::provider::ConfigProvider;
 
+mod acme;
 mod storage;
 
 static DEV_CRT: &[u8] = include_bytes!("../docker/dev.crt");
 static DEV_KEY: &[u8] = include_bytes!("../docker/dev.key");
 
 pub struct TlsResolver<P> {
-    provider: P,
     storage: TlsStorage,
+    acme_resolver: AcmeResolver,
+    provider: P,
 }
 
 impl<P: ConfigProvider + Send + Sync + 'static> TlsResolver<P> {
-    pub fn new(provider: P) -> Self {
+    pub fn new(
+        provider: P,
+        contact: impl Into<String>,
+        url: DirectoryUrl<'static>,
+    ) -> anyhow::Result<Self> {
         let storage = TlsStorage::default();
+        let acme_resolver =
+            AcmeResolver::new(contact, url).context("failed to create acme resolver")?;
 
-        Self { provider, storage }
+        Ok(Self {
+            storage,
+            acme_resolver,
+            provider,
+        })
     }
 
     pub fn into_tls_settings(self) -> TlsSettings {
