@@ -1,11 +1,14 @@
 use acme_lib::Certificate;
+use acme_lib::create_p384_key;
+use acme_lib::order::NewOrder;
 use acme_lib::persist::MemoryPersist;
-use acme_lib::{create_p384_key, order::NewOrder};
 use anyhow::Context;
 use std::sync::{Arc, Mutex};
 
+type Order<P = MemoryPersist> = NewOrder<P>;
+
 pub struct AcmeOrder {
-    order: Arc<Mutex<NewOrder<MemoryPersist>>>,
+    order: Arc<Mutex<Order>>,
 }
 
 pub struct AcmeChallenge {
@@ -14,14 +17,16 @@ pub struct AcmeChallenge {
 }
 
 impl AcmeOrder {
-    pub fn new(order: NewOrder<MemoryPersist>) -> Self {
+    pub fn new(order: Order) -> Self {
         let order = Arc::new(Mutex::new(order));
 
         Self { order }
     }
 
-    /// returns option (token, proof)
-    pub fn get_challenge(&self) -> anyhow::Result<Option<AcmeChallenge>> {
+    pub fn challenge_blocked(
+        &self,
+        challenge_callback: impl Fn(AcmeChallenge),
+    ) -> anyhow::Result<Option<Certificate>> {
         let auths = self
             .order
             .lock()
@@ -39,14 +44,12 @@ impl AcmeOrder {
         let token = challenge.http_token().to_owned();
         let proof = challenge.http_proof();
 
+        challenge_callback(AcmeChallenge::new(token, proof));
+
         challenge
             .validate(2000)
             .context("failed to set validate delay")?;
 
-        Ok(Some(AcmeChallenge::new(token, proof)))
-    }
-
-    pub fn validate_blocked(&self) -> anyhow::Result<Certificate> {
         let mut order = self.order.lock().unwrap();
 
         let ord_csr = loop {
@@ -66,7 +69,7 @@ impl AcmeOrder {
             .download_and_save_cert()
             .context("failed to download cert")?;
 
-        Ok(cert)
+        Ok(Some(cert))
     }
 }
 
@@ -76,5 +79,13 @@ impl AcmeChallenge {
             token: token.into(),
             proof: proof.into(),
         }
+    }
+
+    pub fn token(&self) -> &str {
+        &self.token
+    }
+
+    pub fn proof(&self) -> &str {
+        &self.proof
     }
 }
