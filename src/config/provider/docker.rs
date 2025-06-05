@@ -3,6 +3,7 @@ use bollard::Docker;
 use bollard::query_parameters::{InspectContainerOptions, InspectNetworkOptions};
 use std::collections::{BTreeSet, HashMap};
 use std::net::SocketAddr;
+use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -11,12 +12,13 @@ use super::{ConfigProvider, Value};
 
 mod container;
 
-type Callback = dyn Fn(&Value) + Send + Sync + 'static;
+type AsyncCallback =
+    dyn Fn(&Value) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync + 'static;
 
 #[derive(Clone)]
 pub struct DockerConfig {
     client: Docker,
-    callbacks: Arc<RwLock<Vec<Box<Callback>>>>,
+    callbacks: Arc<RwLock<Vec<Box<AsyncCallback>>>>,
 }
 
 impl DockerConfig {
@@ -93,10 +95,16 @@ impl DockerConfig {
 }
 
 impl ConfigProvider for DockerConfig {
-    async fn update_callback(&self, callback: impl Fn(&Value) + Send + Sync + 'static) {
-        let mut callbacks = self.callbacks.write().await;
+    fn set_update_callback<F, Fut>(&self, callback: F)
+    where
+        F: Fn(Value) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        let boxed = Box::new(move |value: &Value| {
+            Box::pin(callback(value.clone())) as Pin<Box<dyn Future<Output = ()> + Send>>
+        });
 
-        callbacks.push(Box::new(callback));
+        self.callbacks.blocking_write().push(boxed);
     }
 
     async fn update(&self) -> anyhow::Result<Value> {
@@ -123,9 +131,9 @@ impl ConfigProvider for DockerConfig {
 
         let value = result.into_iter().collect();
 
-        self.callbacks.read().await.iter().for_each(|c| {
-            c(&value);
-        });
+        for callback in self.callbacks.read().await.iter() {
+            callback(&value).await;
+        }
 
         Ok(value)
     }

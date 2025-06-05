@@ -1,3 +1,5 @@
+use std::net::SocketAddr;
+
 use acme_lib::DirectoryUrl;
 use anyhow::Context;
 use pingora::listeners::TlsAccept;
@@ -34,6 +36,8 @@ impl<P: ConfigProvider + Send + Sync + 'static> TlsResolver<P> {
         let acme_resolver =
             AcmeResolver::new(contact, url).context("failed to create acme resolver")?;
 
+        provider.set_update_callback(Self::config_update_callback);
+
         Ok(Self {
             storage,
             acme_resolver,
@@ -50,6 +54,8 @@ impl<P: ConfigProvider + Send + Sync + 'static> TlsResolver<P> {
 
         settings
     }
+
+    async fn config_update_callback(config: Vec<(String, Vec<SocketAddr>)>) {}
 }
 
 #[async_trait::async_trait]
