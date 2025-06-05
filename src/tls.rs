@@ -12,6 +12,7 @@ use self::storage::TlsStorage;
 use crate::config::provider::ConfigProvider;
 
 mod acme;
+mod cert;
 mod storage;
 
 static DEV_CRT: &[u8] = include_bytes!("../docker/dev.crt");
@@ -29,7 +30,7 @@ impl<P: ConfigProvider + Send + Sync + 'static> TlsResolver<P> {
         contact: impl Into<String>,
         url: DirectoryUrl<'static>,
     ) -> anyhow::Result<Self> {
-        let storage = TlsStorage::default();
+        let storage = TlsStorage::from_env().context("failed to create tls storage")?;
         let acme_resolver =
             AcmeResolver::new(contact, url).context("failed to create acme resolver")?;
 
