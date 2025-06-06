@@ -3,6 +3,8 @@ use config::ConfigRefresher;
 use config::provider::docker::DockerConfig;
 use pingora::prelude::*;
 use tls::TlsResolver;
+use tracing::Level;
+use tracing_subscriber::FmtSubscriber;
 
 use self::proxy::Gateway;
 use self::proxy::SwarmProxy;
@@ -13,6 +15,12 @@ mod proxy;
 mod tls;
 
 fn main() {
+    let subscriber = FmtSubscriber::builder()
+        .with_max_level(Level::INFO)
+        .finish();
+
+    tracing::subscriber::set_global_default(subscriber).unwrap();
+
     let mut server = Server::new(None).unwrap();
 
     let gateway = Gateway::default();
