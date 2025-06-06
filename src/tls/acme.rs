@@ -5,6 +5,7 @@ use anyhow::Context;
 use self::challenge::AcmeOrder;
 
 pub mod challenge;
+pub mod service;
 
 pub struct AcmeResolver {
     contact: String,
