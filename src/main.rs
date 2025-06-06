@@ -27,7 +27,7 @@ fn main() {
     let mut proxy_service = http_proxy_service(&server.configuration, proxy);
 
     proxy_service.add_tcp("0.0.0.0:80");
-    proxy_service.add_tls_with_settings("0.0.0.0:443", None, tls_resolver.into_tls_settings());
+    proxy_service.add_tls_with_settings("0.0.0.0:443", None, tls_resolver.as_tls_settings());
 
     server.add_service(proxy_service);
 
