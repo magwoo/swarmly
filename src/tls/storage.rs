@@ -6,24 +6,24 @@ use super::cert::Certificate;
 
 pub struct TlsStorage {
     cache: HashMap<String, Certificate>,
-    data_path: String,
+    data_dir: String,
 }
 
 impl TlsStorage {
-    const DEFAULT_DATA_PATH: &str = "/data";
+    const DEFAULT_DATA_DIR: &str = "/data";
 
     pub fn new(data_path: impl Into<String>) -> Self {
         Self {
-            data_path: data_path.into(),
+            data_dir: data_path.into(),
             ..Default::default()
         }
     }
 
     pub fn from_env() -> anyhow::Result<Self> {
-        let data_path = std::env::var("DATA_PATH").context("missing `DATA_PATH` env var")?;
-        let data_path = data_path.trim().trim_end_matches("/").to_owned();
+        let data_dir = std::env::var("DATA_DIR").unwrap_or(Self::DEFAULT_DATA_DIR.to_owned());
+        let data_dir = data_dir.trim().trim_end_matches("/").to_owned();
 
-        Ok(Self::new(data_path))
+        Ok(Self::new(data_dir))
     }
 
     pub async fn is_exists(&self, domain: &str) -> anyhow::Result<bool> {
@@ -74,7 +74,7 @@ impl TlsStorage {
     }
 
     fn cert_path(&self, domain: &str) -> String {
-        format!("{}/{}.cert", self.data_path, domain)
+        format!("{}/{}.cert", self.data_dir, domain)
     }
 }
 
@@ -82,7 +82,7 @@ impl Default for TlsStorage {
     fn default() -> Self {
         TlsStorage {
             cache: HashMap::new(),
-            data_path: Self::DEFAULT_DATA_PATH.to_owned(),
+            data_dir: Self::DEFAULT_DATA_DIR.to_owned(),
         }
     }
 }
