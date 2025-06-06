@@ -7,8 +7,17 @@ use tokio::sync::RwLock;
 
 use super::challenge::AcmeChallenge;
 
+#[derive(Default, Clone)]
 pub struct AcmeChallengeService {
     challenges: Arc<RwLock<HashMap<String, AcmeChallenge>>>,
+}
+
+impl AcmeChallengeService {
+    pub fn add_challenge(&self, domain: impl Into<String>, challenge: AcmeChallenge) {
+        let mut challenges = self.challenges.blocking_write();
+
+        challenges.insert(domain.into(), challenge);
+    }
 }
 
 #[async_trait::async_trait]

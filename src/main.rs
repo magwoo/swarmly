@@ -6,6 +6,7 @@ use tls::TlsResolver;
 
 use self::proxy::Gateway;
 use self::proxy::SwarmProxy;
+use self::tls::AcmeChallengeService;
 
 mod config;
 mod proxy;
@@ -16,8 +17,10 @@ fn main() {
 
     let gateway = Gateway::default();
     let config_provider = DockerConfig::new().unwrap();
+    let acme_challenge = AcmeChallengeService::default();
     let tls_resolver = TlsResolver::new(
         config_provider.clone(),
+        acme_challenge.clone(),
         "test@mail.ru",
         DirectoryUrl::LetsEncryptStaging,
     )

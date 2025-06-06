@@ -1,9 +1,10 @@
-use acme_lib::Certificate;
 use acme_lib::create_p384_key;
 use acme_lib::order::NewOrder;
 use acme_lib::persist::MemoryPersist;
 use anyhow::Context;
 use std::sync::{Arc, Mutex};
+
+use crate::tls::cert::Certificate;
 
 type Order<P = MemoryPersist> = NewOrder<P>;
 
@@ -26,7 +27,7 @@ impl AcmeOrder {
     pub fn challenge_blocked(
         &self,
         challenge_callback: impl Fn(AcmeChallenge),
-    ) -> anyhow::Result<Option<Certificate>> {
+    ) -> anyhow::Result<Certificate> {
         let auths = self
             .order
             .lock()
@@ -34,10 +35,10 @@ impl AcmeOrder {
             .authorizations()
             .context("failed to authorization")?;
 
-        let auth = match auths.into_iter().next() {
-            Some(auth) => auth,
-            None => return Ok(None),
-        };
+        let auth = auths
+            .into_iter()
+            .next()
+            .context("missing any acme authorizations")?;
 
         let challenge = auth.http_challenge();
 
@@ -69,7 +70,19 @@ impl AcmeOrder {
             .download_and_save_cert()
             .context("failed to download cert")?;
 
-        Ok(Some(cert))
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("local time must be biggest when unix epoch")
+            .as_secs();
+
+        let cert = Certificate::new(
+            cert.private_key().as_bytes(),
+            cert.certificate().as_bytes(),
+            timestamp,
+        )
+        .context("failed to create certificate")?;
+
+        Ok(cert)
     }
 }
 

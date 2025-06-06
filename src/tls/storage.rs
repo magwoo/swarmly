@@ -40,6 +40,19 @@ impl TlsStorage {
         Ok(is_exists)
     }
 
+    pub async fn set(&mut self, domain: &str, cert: Certificate) -> anyhow::Result<()> {
+        let path = self.cert_path(domain);
+        let bytes = cert.to_bytes();
+
+        tokio::fs::write(path, bytes)
+            .await
+            .context("failed to save cert to file")?;
+
+        self.cache.insert(domain.to_owned(), cert);
+
+        Ok(())
+    }
+
     pub async fn get(&mut self, domain: &str) -> anyhow::Result<Option<&Certificate>> {
         let path = self.cert_path(domain);
 
