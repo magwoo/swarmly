@@ -10,7 +10,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
 
   api:
-    image: magwoo/helloworld:latest
+    image: magwoo/http-placeholder:latest
     labels:
       - proxy.domain=app.ru
     deploy:

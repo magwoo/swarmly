@@ -3,9 +3,7 @@ use anyhow::Context;
 use pingora::listeners::TlsAccept;
 use pingora::listeners::tls::TlsSettings;
 use pingora::protocols::tls::TlsRef;
-use pingora::tls::pkey::PKey;
 use pingora::tls::ssl::NameType;
-use pingora::tls::x509::X509;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -19,8 +17,8 @@ mod acme;
 mod cert;
 mod storage;
 
-static DEV_CRT: &[u8] = include_bytes!("../docker/dev.crt");
-static DEV_KEY: &[u8] = include_bytes!("../docker/dev.key");
+static _DEV_CRT: &[u8] = include_bytes!("../docker/dev.crt");
+static _DEV_KEY: &[u8] = include_bytes!("../docker/dev.key");
 
 pub struct TlsResolver<P> {
     inner: Arc<Mutex<TlsResolverInner<P>>>,
@@ -149,12 +147,23 @@ impl<P: ConfigProvider + Send + Sync + 'static> TlsResolverInner<P> {
 #[async_trait::async_trait]
 impl<P: ConfigProvider + Send + Sync> TlsAccept for TlsResolver<P> {
     async fn certificate_callback(&self, ssl: &mut TlsRef) -> () {
-        if ssl.servername(NameType::HOST_NAME).is_some() {
-            let crt = X509::from_pem(DEV_CRT).unwrap();
-            ssl.set_certificate(&crt).unwrap();
+        if let Some(domain) = ssl.servername(NameType::HOST_NAME) {
+            let mut inner = self.inner.lock().await;
 
-            let key = PKey::private_key_from_pem(DEV_KEY).unwrap();
-            ssl.set_private_key(&key).unwrap();
+            let cert = match inner.storage.get(domain).await {
+                Ok(Some(cert)) => cert,
+                Ok(None) => return,
+                Err(err) => {
+                    tracing::error!("failed to get cert from storage: {err:?}");
+                    return;
+                }
+            };
+
+            let key = cert.private_key();
+            let crt = cert.certificate();
+
+            ssl.set_certificate(crt).unwrap();
+            ssl.set_private_key(key).unwrap();
         }
     }
 }

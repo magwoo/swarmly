@@ -24,6 +24,14 @@ impl Certificate {
         })
     }
 
+    pub fn private_key(&self) -> &PKey<Private> {
+        &self.private_key
+    }
+
+    pub fn certificate(&self) -> &X509 {
+        &self.certificate
+    }
+
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut buf = BufWriter::new(Vec::new());
 
