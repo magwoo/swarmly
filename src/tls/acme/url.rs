@@ -13,8 +13,8 @@ impl UrlFromEnv for DirectoryUrl<'static> {
 
         let url = match value {
             "none" => return None,
-            "letsencrypt" => DirectoryUrl::LetsEncrypt,
-            "letsencrypt-staging" => DirectoryUrl::LetsEncryptStaging,
+            "letsencrypt" | "le" => DirectoryUrl::LetsEncrypt,
+            "letsencrypt-staging" | "sle" => DirectoryUrl::LetsEncryptStaging,
             url => DirectoryUrl::Other(url),
         };
 
