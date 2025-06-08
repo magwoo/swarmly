@@ -2,6 +2,7 @@ use acme_lib::DirectoryUrl;
 use config::ConfigRefresher;
 use config::provider::docker::DockerConfig;
 use pingora::prelude::*;
+use pingora::services::listening::Service;
 use tls::TlsResolver;
 use tracing::Level;
 use tracing_subscriber::FmtSubscriber;
@@ -33,6 +34,13 @@ fn main() {
         DirectoryUrl::LetsEncryptStaging,
     )
     .unwrap();
+
+    let mut acme_challenge_service =
+        Service::new("acme challenge service".to_string(), acme_challenge);
+
+    acme_challenge_service.add_tcp("0.0.0.0:7765");
+
+    server.add_service(acme_challenge_service);
 
     let proxy = SwarmProxy::new(gateway.clone());
     let mut proxy_service = http_proxy_service(&server.configuration, proxy);

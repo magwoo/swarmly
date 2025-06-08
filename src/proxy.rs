@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use pingora::Result;
 use pingora::prelude::*;
 use pingora::protocols::l4::socket::SocketAddr;
@@ -30,6 +32,13 @@ impl ProxyHttp for SwarmProxy {
     where
         Self::CTX: Send + Sync,
     {
+        if session.req_header().uri.path().starts_with(".well-known") {
+            *ctx = Some(SocketAddr::Inet(
+                std::net::SocketAddr::from_str("127.0.0.1:7765").expect("addr must be valid"),
+            ));
+            return Ok(false);
+        }
+
         let domain = session
             .get_header("host")
             .and_then(|h| h.to_str().ok())
