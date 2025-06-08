@@ -8,10 +8,9 @@ services:
       - 443:443
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - proxy-network
 
-  api:
-    image: magwoo/http-placeholder:latest
-    labels:
-      - proxy.domain=app.ru
-    deploy:
-      replicas: 2
+networks:
+  proxy-network:
+    name: proxy-network

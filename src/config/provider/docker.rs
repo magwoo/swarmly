@@ -67,8 +67,8 @@ impl DockerConfig {
             let containers = network
                 .containers
                 .unwrap_or_else(HashMap::default)
-                .into_values()
-                .filter_map(|c| c.name.zip(c.ipv4_address))
+                .into_iter()
+                .filter_map(|(id, c)| c.ipv4_address.map(|a| (id, a)))
                 .map(|(id, ipv4)| Container::new(id, &ipv4))
                 .collect::<anyhow::Result<Vec<_>>>()
                 .context("failed to check network containers")?;
