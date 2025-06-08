@@ -4,8 +4,11 @@ use anyhow::Context;
 
 use self::challenge::AcmeOrder;
 
+pub use self::url::UrlFromEnv;
+
 pub mod challenge;
 pub mod service;
+pub mod url;
 
 pub struct AcmeResolver {
     contact: String,

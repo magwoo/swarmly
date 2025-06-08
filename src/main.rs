@@ -10,6 +10,7 @@ use tracing_subscriber::FmtSubscriber;
 use self::proxy::Gateway;
 use self::proxy::SwarmProxy;
 use self::tls::AcmeChallengeService;
+use self::tls::acme::UrlFromEnv;
 
 mod config;
 mod proxy;
@@ -31,7 +32,7 @@ fn main() {
         config_provider.clone(),
         acme_challenge.clone(),
         "test@mail.ru",
-        DirectoryUrl::LetsEncryptStaging,
+        DirectoryUrl::from_env(),
     )
     .unwrap();
 
