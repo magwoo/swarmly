@@ -24,10 +24,14 @@ impl AcmeResolver {
     }
 
     pub fn issue_cert(&self, domain: &str) -> anyhow::Result<AcmeOrder> {
+        tracing::debug!("account dir preparing..");
+
         let acc = self
             .dir
             .account(&self.contact)
             .context("failed to account directory")?;
+
+        tracing::debug!("ordering domain: {}", domain);
 
         let new_order = acc
             .new_order(domain, &[])

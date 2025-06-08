@@ -76,15 +76,18 @@ impl<P: ConfigProvider + Send + Sync + 'static> TlsResolver<P> {
                         match is_exists {
                             Ok(true) => continue,
                             Ok(false) => {
+                                tracing::info!("found an new domain for acme: {}", domain);
                                 if let Err(err) = inner.issue_and_store_cert(&domain).await {
-                                    eprintln!(
+                                    tracing::error!(
                                         "failed to issue cert for domain({}): {err:?}",
                                         domain
                                     )
                                 }
                             }
                             Err(err) => {
-                                eprintln!("failed to check is domain({domain}) exists: {err:?}");
+                                tracing::error!(
+                                    "failed to check is domain({domain}) exists: {err:?}"
+                                );
                                 continue;
                             }
                         }

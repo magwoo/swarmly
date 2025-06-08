@@ -47,11 +47,5 @@ fn main() {
 
     server.add_service(config_service);
 
-    // gateway.add_tls_with_settings(
-    //     "0.0.0.0:443",
-    //     None,
-    //     TlsSettings::with_callbacks(Box::new(tls::TlsResolver)).unwrap(),
-    // );
-
     server.run_forever()
 }

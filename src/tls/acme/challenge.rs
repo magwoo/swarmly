@@ -2,7 +2,10 @@ use acme_lib::create_p384_key;
 use acme_lib::order::NewOrder;
 use acme_lib::persist::MemoryPersist;
 use anyhow::Context;
-use std::sync::{Arc, Mutex};
+use std::{
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use crate::tls::cert::Certificate;
 
@@ -18,6 +21,8 @@ pub struct AcmeChallenge {
 }
 
 impl AcmeOrder {
+    const CHALLENGE_LOOP_TIMEOUT: Duration = Duration::from_secs(1);
+
     pub fn new(order: Order) -> Self {
         let order = Arc::new(Mutex::new(order));
 
@@ -28,6 +33,8 @@ impl AcmeOrder {
         &self,
         challenge_callback: impl Fn(AcmeChallenge),
     ) -> anyhow::Result<Certificate> {
+        tracing::debug!("getting acme authorizations..");
+
         let auths = self
             .order
             .lock()
@@ -40,10 +47,14 @@ impl AcmeOrder {
             .next()
             .context("missing any acme authorizations")?;
 
+        tracing::debug!("preparing acme http challenge..");
+
         let challenge = auth.http_challenge();
 
         let token = challenge.http_token().to_owned();
         let proof = challenge.http_proof();
+
+        tracing::debug!("calling challenge callback..");
 
         challenge_callback(AcmeChallenge::new(token, proof));
 
@@ -54,12 +65,23 @@ impl AcmeOrder {
         let mut order = self.order.lock().unwrap();
 
         let ord_csr = loop {
+            let start = std::time::Instant::now();
             if let Some(csr) = order.confirm_validations() {
                 break csr;
             }
 
+            tracing::debug!("waiting while challenge pass and order confirm");
+
             order.refresh().context("failed to refresh order")?;
+
+            let timeout = Self::CHALLENGE_LOOP_TIMEOUT
+                .checked_sub(start.elapsed())
+                .unwrap_or(Duration::from_secs(0));
+
+            std::thread::sleep(timeout);
         };
+
+        tracing::debug!("challenge complete");
 
         let pkey = create_p384_key();
         let ord_cert = ord_csr
