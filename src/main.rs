@@ -28,16 +28,9 @@ fn main() {
     let gateway = Gateway::default();
     let config_provider = DockerConfig::new().unwrap();
     let acme_challenge = AcmeChallengeService::default();
-    let tls_resolver = TlsResolver::new(
-        config_provider.clone(),
-        acme_challenge.clone(),
-        "test@mail.ru",
-        DirectoryUrl::from_env(),
-    )
-    .unwrap();
 
     let mut acme_challenge_service =
-        Service::new("acme challenge service".to_string(), acme_challenge);
+        Service::new("acme challenge service".to_string(), acme_challenge.clone());
 
     acme_challenge_service.add_tcp("0.0.0.0:7765");
 
@@ -47,7 +40,13 @@ fn main() {
     let mut proxy_service = http_proxy_service(&server.configuration, proxy);
 
     proxy_service.add_tcp("0.0.0.0:80");
-    proxy_service.add_tls_with_settings("0.0.0.0:443", None, tls_resolver.as_tls_settings());
+
+    if let Some(url) = DirectoryUrl::from_env() {
+        let tls_resolver =
+            TlsResolver::new(config_provider.clone(), acme_challenge, "test@mail.ru", url).unwrap();
+
+        proxy_service.add_tls_with_settings("0.0.0.0:443", None, tls_resolver.as_tls_settings());
+    }
 
     server.add_service(proxy_service);
 

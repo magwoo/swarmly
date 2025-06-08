@@ -4,21 +4,20 @@ pub trait UrlFromEnv
 where
     Self: Sized,
 {
-    fn from_env() -> Self;
+    fn from_env() -> Option<Self>;
 }
 
 impl UrlFromEnv for DirectoryUrl<'static> {
-    fn from_env() -> Self {
-        let value: &'static str = std::env::var("ACME_PROVIDER")
-            .unwrap_or_else(|_| "none".to_owned())
-            .leak()
-            .trim();
+    fn from_env() -> Option<Self> {
+        let value: &'static str = std::env::var("ACME_PROVIDER").ok()?.leak().trim();
 
-        match value {
-            "none" => DirectoryUrl::Other(""),
+        let url = match value {
+            "none" => return None,
             "letsencrypt" => DirectoryUrl::LetsEncrypt,
             "letsencrypt-staging" => DirectoryUrl::LetsEncryptStaging,
             url => DirectoryUrl::Other(url),
-        }
+        };
+
+        Some(url)
     }
 }
