@@ -32,7 +32,7 @@ impl ProxyHttp for SwarmProxy {
     where
         Self::CTX: Send + Sync,
     {
-        if session.req_header().uri.path().starts_with(".well-known") {
+        if session.req_header().uri.path().starts_with("/.well-known") {
             *ctx = Some(SocketAddr::Inet(
                 std::net::SocketAddr::from_str("127.0.0.1:7765").expect("addr must be valid"),
             ));
