@@ -2,8 +2,7 @@ use http::Response;
 use pingora::apps::http_app::ServeHttp;
 use pingora::protocols::http::ServerSession;
 use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::RwLock;
+use std::sync::{Arc, RwLock};
 
 use super::challenge::AcmeChallenge;
 
@@ -14,7 +13,7 @@ pub struct AcmeChallengeService {
 
 impl AcmeChallengeService {
     pub fn add_challenge(&self, domain: impl Into<String>, challenge: AcmeChallenge) {
-        let mut challenges = self.challenges.blocking_write();
+        let mut challenges = self.challenges.write().unwrap();
 
         challenges.insert(domain.into(), challenge);
     }
@@ -42,7 +41,7 @@ impl ServeHttp for AcmeChallengeService {
             None => return not_found(),
         };
 
-        let challenges = self.challenges.read().await;
+        let challenges = self.challenges.read().unwrap();
 
         let challenge = match challenges.get(domain) {
             Some(challenge) => challenge,
