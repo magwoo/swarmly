@@ -157,11 +157,16 @@ impl AcmeResolver {
                     .await
                     .context("failed to finalize order")?;
 
-                let cert = order
-                    .certificate()
-                    .await
-                    .context("failed to get certificate")?
-                    .context("missing certificate")?;
+                let cert = loop {
+                    match order
+                        .certificate()
+                        .await
+                        .context("failed to get certificate")?
+                    {
+                        Some(cert) => break cert,
+                        None => tokio::time::sleep(Duration::from_secs(1)).await,
+                    }
+                };
 
                 let pkey = private_key.serialize_pem();
                 let timestamp = SystemTime::now()
