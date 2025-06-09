@@ -1,4 +1,3 @@
-use acme_lib::DirectoryUrl;
 use config::ConfigRefresher;
 use config::provider::docker::DockerConfig;
 use pingora::prelude::*;
@@ -10,7 +9,6 @@ use tracing_subscriber::FmtSubscriber;
 use self::proxy::Gateway;
 use self::proxy::SwarmProxy;
 use self::tls::AcmeChallengeService;
-use self::tls::acme::UrlFromEnv;
 
 mod config;
 mod proxy;
@@ -41,10 +39,7 @@ fn main() {
 
     proxy_service.add_tcp("0.0.0.0:80");
 
-    if let Some(url) = DirectoryUrl::from_env() {
-        let tls_resolver =
-            TlsResolver::new(config_provider.clone(), acme_challenge, "test@mail.ru", url).unwrap();
-
+    if let Some(tls_resolver) = TlsResolver::new(config_provider.clone(), acme_challenge).unwrap() {
         proxy_service.add_tls_with_settings("0.0.0.0:443", None, tls_resolver.as_tls_settings());
     }
 
