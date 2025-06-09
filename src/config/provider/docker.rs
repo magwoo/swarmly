@@ -68,7 +68,7 @@ impl DockerConfig {
                 .containers
                 .unwrap_or_else(HashMap::default)
                 .into_iter()
-                .filter(|(id, _)| id != "ingress-sbox")
+                .filter(|(id, _)| id.len() == 64)
                 .filter_map(|(id, c)| c.ipv4_address.map(|a| (id, a)))
                 .map(|(id, ipv4)| Container::new(id, &ipv4))
                 .collect::<anyhow::Result<Vec<_>>>()
