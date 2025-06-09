@@ -13,10 +13,9 @@ use crate::config::provider::ConfigProvider;
 
 pub use self::acme::service::AcmeChallengeService;
 
+mod acme;
 mod cert;
 mod storage;
-
-pub mod acme;
 
 static _DEV_CRT: &[u8] = include_bytes!("../docker/dev.crt");
 static _DEV_KEY: &[u8] = include_bytes!("../docker/dev.key");

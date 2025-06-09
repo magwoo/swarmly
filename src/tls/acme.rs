@@ -1,29 +1,49 @@
-use acme_lib::persist::MemoryPersist;
-use acme_lib::{Directory, DirectoryUrl};
 use anyhow::Context;
+use instant_acme::{Account, NewAccount};
 
 use self::challenge::AcmeOrder;
 
-pub use self::url::UrlFromEnv;
-
 pub mod challenge;
 pub mod service;
-pub mod url;
 
+#[derive(Clone)]
 pub struct AcmeResolver {
-    contact: String,
-    dir: Directory<MemoryPersist>,
+    account: Account,
 }
 
 impl AcmeResolver {
-    pub fn new(contact: impl Into<String>, url: DirectoryUrl<'static>) -> anyhow::Result<Self> {
-        let persist = MemoryPersist::new();
-        let dir = Directory::from_url(persist, url).context("failed to create directory")?;
+    pub async fn from_env() -> anyhow::Result<Option<Self>> {
+        let provider = match std::env::var("ACME_PROVIDER") {
+            Ok(provider) => provider.trim().to_lowercase(),
+            _ => return Ok(None),
+        };
 
-        Ok(Self {
-            contact: contact.into(),
-            dir,
-        })
+        let url = match provider.as_ref() {
+            "letsencrypt" | "le" => instant_acme::LetsEncrypt::Production.url(),
+            "staging-letsencrypt" | "sle" => instant_acme::LetsEncrypt::Staging.url(),
+            anyother => anyother,
+        };
+
+        let contact = std::env::var("ACME_CONTACT").map(|e| format!("mailto:{}", e));
+        let contact = match contact.as_ref() {
+            Ok(email) => &[email.as_str()] as &[&str],
+            _ => &[],
+        };
+
+        // TODO: make an account save system
+        let (account, _credentials) = Account::create(
+            &NewAccount {
+                contact,
+                terms_of_service_agreed: true,
+                only_return_existing: true,
+            },
+            url,
+            None,
+        )
+        .await
+        .context("failed to create account")?;
+
+        Ok(Some(Self { account }))
     }
 
     pub fn issue_cert(&self, domain: &str) -> anyhow::Result<AcmeOrder> {
