@@ -4,6 +4,7 @@ use instant_acme::{
     Account, ChallengeType, Identifier, LetsEncrypt, NewAccount, NewOrder, OrderStatus,
 };
 use rcgen::KeyPair;
+use std::sync::OnceLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc::Sender;
 
@@ -14,7 +15,9 @@ pub mod service;
 
 #[derive(Clone)]
 pub struct AcmeResolver {
-    account: Account,
+    account: OnceLock<Account>,
+    contact: Option<String>,
+    url: String,
 }
 
 impl AcmeResolver {
@@ -31,30 +34,44 @@ impl AcmeResolver {
             "letsencrypt" | "le" => LetsEncrypt::Production.url(),
             "staging-letsencrypt" | "sle" => LetsEncrypt::Staging.url(),
             anyother => anyother,
-        };
+        }
+        .to_owned();
 
-        let contact = std::env::var("ACME_CONTACT").map(|e| format!("mailto:{}", e));
+        let contact = std::env::var("ACME_CONTACT").ok();
+
+        Ok(Some(Self {
+            account: OnceLock::new(),
+            contact,
+            url,
+        }))
+    }
+
+    async fn account(&self) -> anyhow::Result<&Account> {
+        if let Some(account) = self.account.get() {
+            return Ok(account);
+        }
+
+        let contact = self.contact.as_ref().map(|m| format!("mailto:{m}"));
         let contact = match contact.as_ref() {
-            Ok(email) => &[email.as_str()] as &[&str],
-            _ => &[],
+            Some(contact) => &[contact.as_str()] as &[&str],
+            None => &[],
         };
 
-        // TODO: make an account save system and maybe real async
-        let (account, _credentials) = futures::executor::block_on(async {
-            Account::create(
-                &NewAccount {
-                    contact,
-                    terms_of_service_agreed: true,
-                    only_return_existing: true,
-                },
-                url,
-                None,
-            )
-            .await
-        })
+        let (account, _credentials) = Account::create(
+            &NewAccount {
+                contact,
+                terms_of_service_agreed: true,
+                only_return_existing: true,
+            },
+            &self.url,
+            None,
+        )
+        .await
         .context("failed to create account")?;
 
-        Ok(Some(Self { account }))
+        let _ = self.account.set(account);
+
+        Ok(self.account.get().unwrap())
     }
 
     pub async fn issue_cert<D>(
@@ -68,7 +85,8 @@ impl AcmeResolver {
         tracing::debug!("ordering domain: {}", domain);
 
         let mut order = self
-            .account
+            .account()
+            .await?
             .new_order(&NewOrder {
                 identifiers: &[Identifier::Dns(domain.clone().into())],
             })

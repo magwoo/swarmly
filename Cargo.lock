@@ -2168,7 +2168,6 @@ dependencies = [
  "anyhow",
  "async-trait",
  "bollard",
- "futures",
  "http",
  "instant-acme",
  "pingora",
