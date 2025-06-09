@@ -1,4 +1,3 @@
-use acme_lib::DirectoryUrl;
 use anyhow::Context;
 use pingora::listeners::TlsAccept;
 use pingora::listeners::tls::TlsSettings;
@@ -32,20 +31,21 @@ struct TlsResolverInner<P> {
 }
 
 impl<P: ConfigProvider + Send + Sync + 'static> TlsResolver<P> {
-    pub fn new(
-        provider: P,
-        service: AcmeChallengeService,
-        contact: impl Into<String>,
-        url: DirectoryUrl<'static>,
-    ) -> anyhow::Result<Self> {
-        let inner = TlsResolverInner::new(provider, service, contact, url)?;
+    pub fn new(provider: P, service: AcmeChallengeService) -> anyhow::Result<Option<Self>> {
+        let acme_resolver =
+            match AcmeResolver::from_env().context("failed to create acme resolver from env")? {
+                Some(resolver) => resolver,
+                None => return Ok(None),
+            };
+
+        let inner = TlsResolverInner::new(provider, service, acme_resolver)?;
         let inner = Arc::new(Mutex::new(inner));
 
         let instance = Self { inner };
 
         instance.connect_config_callback();
 
-        Ok(instance)
+        Ok(Some(instance))
     }
 
     pub fn as_tls_settings(&self) -> TlsSettings {
@@ -107,18 +107,12 @@ impl<P: ConfigProvider + Send + Sync + 'static> TlsResolverInner<P> {
     }
 
     pub async fn issue_and_store_cert(&mut self, domain: &str) -> anyhow::Result<()> {
-        let order = self
+        let channel = self.service.channel();
+        let cert = self
             .acme_resolver
-            .issue_cert(domain)
+            .issue_cert(domain, channel)
+            .await
             .with_context(|| format!("failed to issue domain({})", domain))?;
-
-        let service = self.service.clone();
-
-        let cert = order
-            .challenge_blocked(|c| {
-                service.add_challenge(domain, c);
-            })
-            .with_context(|| format!("failed to challenge domain({})", domain))?;
 
         self.storage
             .set(domain, cert)
@@ -131,12 +125,9 @@ impl<P: ConfigProvider + Send + Sync + 'static> TlsResolverInner<P> {
     pub fn new(
         provider: P,
         service: AcmeChallengeService,
-        contact: impl Into<String>,
-        url: DirectoryUrl<'static>,
+        acme_resolver: AcmeResolver,
     ) -> anyhow::Result<Self> {
         let storage = TlsStorage::from_env().context("failed to create tls storage")?;
-        let acme_resolver =
-            AcmeResolver::new(contact, url).context("failed to create acme resolver")?;
 
         Ok(Self {
             storage,

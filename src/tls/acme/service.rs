@@ -2,20 +2,24 @@ use http::Response;
 use pingora::apps::http_app::ServeHttp;
 use pingora::protocols::http::ServerSession;
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::mpsc::Sender;
+use tokio::sync::{RwLock, mpsc};
 
 use super::challenge::AcmeChallenge;
 
-#[derive(Default, Clone)]
+#[derive(Clone)]
 pub struct AcmeChallengeService {
     challenges: Arc<RwLock<HashMap<String, AcmeChallenge>>>,
+    sender: Sender<AcmeChallenge>,
 }
 
 impl AcmeChallengeService {
-    pub fn add_challenge(&self, domain: impl Into<String>, challenge: AcmeChallenge) {
-        let mut challenges = self.challenges.write().unwrap();
+    const CHALLENGE_LIFETIME: Duration = Duration::from_secs(30);
 
-        challenges.insert(domain.into(), challenge);
+    pub fn channel(&self) -> Sender<AcmeChallenge> {
+        self.sender.clone()
     }
 }
 
@@ -41,7 +45,7 @@ impl ServeHttp for AcmeChallengeService {
             None => return not_found(),
         };
 
-        let challenges = self.challenges.read().unwrap();
+        let challenges = self.challenges.read().await;
 
         let challenge = match challenges.get(domain) {
             Some(challenge) => challenge,
@@ -55,5 +59,32 @@ impl ServeHttp for AcmeChallengeService {
         }
 
         not_found()
+    }
+}
+
+impl Default for AcmeChallengeService {
+    fn default() -> Self {
+        let challenges = Arc::new(RwLock::new(HashMap::default()));
+
+        let (sender, mut reciver) = mpsc::channel::<AcmeChallenge>(8);
+
+        let challenges_for_add = Arc::clone(&challenges);
+        tokio::spawn(async move {
+            while let Some(challenge) = reciver.recv().await {
+                let domain = challenge.domain().to_owned();
+
+                let mut challenges = challenges_for_add.write().await;
+                challenges.insert(domain.to_owned(), challenge);
+
+                let challenges_for_remove = Arc::clone(&challenges_for_add);
+                tokio::spawn(async move {
+                    tokio::time::sleep(Self::CHALLENGE_LIFETIME).await;
+
+                    challenges_for_remove.write().await.remove(&domain);
+                });
+            }
+        });
+
+        Self { challenges, sender }
     }
 }
