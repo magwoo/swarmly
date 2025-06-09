@@ -3,23 +3,53 @@ use pingora::apps::http_app::ServeHttp;
 use pingora::protocols::http::ServerSession;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::OnceLock;
 use std::time::Duration;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::{RwLock, mpsc};
 
 use super::challenge::AcmeChallenge;
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct AcmeChallengeService {
     challenges: Arc<RwLock<HashMap<String, AcmeChallenge>>>,
-    sender: Sender<AcmeChallenge>,
+    sender: OnceLock<Sender<AcmeChallenge>>,
 }
 
 impl AcmeChallengeService {
     const CHALLENGE_LIFETIME: Duration = Duration::from_secs(30);
 
     pub fn channel(&self) -> Sender<AcmeChallenge> {
-        self.sender.clone()
+        if let Some(sender) = self.sender.get() {
+            return sender.clone();
+        }
+
+        let (sender, mut reciver) = mpsc::channel::<AcmeChallenge>(8);
+
+        let challenges = Arc::clone(&self.challenges);
+        tokio::spawn(async move {
+            while let Some(challenge) = reciver.recv().await {
+                let domain = challenge.domain().to_owned();
+
+                challenges
+                    .write()
+                    .await
+                    .insert(domain.to_owned(), challenge);
+
+                let challenges_for_remove = Arc::clone(&challenges);
+                tokio::spawn(async move {
+                    tokio::time::sleep(Self::CHALLENGE_LIFETIME).await;
+
+                    challenges_for_remove.write().await.remove(&domain);
+                });
+            }
+        });
+
+        self.sender
+            .set(sender.clone())
+            .expect("cell must be does not initialized");
+
+        sender
     }
 }
 
@@ -62,29 +92,29 @@ impl ServeHttp for AcmeChallengeService {
     }
 }
 
-impl Default for AcmeChallengeService {
-    fn default() -> Self {
-        let challenges = Arc::new(RwLock::new(HashMap::default()));
+// impl Default for AcmeChallengeService {
+//     fn default() -> Self {
+//         let challenges = Arc::new(RwLock::new(HashMap::default()));
 
-        let (sender, mut reciver) = mpsc::channel::<AcmeChallenge>(8);
+//         let (sender, mut reciver) = mpsc::channel::<AcmeChallenge>(8);
 
-        let challenges_for_add = Arc::clone(&challenges);
-        tokio::spawn(async move {
-            while let Some(challenge) = reciver.recv().await {
-                let domain = challenge.domain().to_owned();
+//         let challenges_for_add = Arc::clone(&challenges);
+//         tokio::spawn(async move {
+//             while let Some(challenge) = reciver.recv().await {
+//                 let domain = challenge.domain().to_owned();
 
-                let mut challenges = challenges_for_add.write().await;
-                challenges.insert(domain.to_owned(), challenge);
+//                 let mut challenges = challenges_for_add.write().await;
+//                 challenges.insert(domain.to_owned(), challenge);
 
-                let challenges_for_remove = Arc::clone(&challenges_for_add);
-                tokio::spawn(async move {
-                    tokio::time::sleep(Self::CHALLENGE_LIFETIME).await;
+//                 let challenges_for_remove = Arc::clone(&challenges_for_add);
+//                 tokio::spawn(async move {
+//                     tokio::time::sleep(Self::CHALLENGE_LIFETIME).await;
 
-                    challenges_for_remove.write().await.remove(&domain);
-                });
-            }
-        });
+//                     challenges_for_remove.write().await.remove(&domain);
+//                 });
+//             }
+//         });
 
-        Self { challenges, sender }
-    }
-}
+//         Self { challenges, sender }
+//     }
+// }
