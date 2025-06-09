@@ -1,6 +1,5 @@
 services:
   proxy:
-    image: magwoo/swarmly:latest
     build:
       dockerfile: docker/Dockerfile.prod
     ports:
