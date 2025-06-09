@@ -3,7 +3,7 @@ use challenge::AcmeChallenge;
 use instant_acme::{
     Account, ChallengeType, Identifier, LetsEncrypt, NewAccount, NewOrder, OrderStatus,
 };
-use rcgen::KeyPair;
+use rcgen::{DistinguishedName, KeyPair};
 use std::sync::OnceLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc::Sender;
@@ -143,8 +143,12 @@ impl AcmeResolver {
 
             if state.status == OrderStatus::Ready {
                 let private_key = KeyPair::generate().context("failed to generate csr keypair")?;
-                let csr = rcgen::CertificateParams::new(vec![domain.clone().into()])
-                    .context("failed to create csr")?
+                let mut params = rcgen::CertificateParams::new(vec![domain.clone().into()])
+                    .context("failed to create csr")?;
+
+                params.distinguished_name = DistinguishedName::new();
+
+                let csr = params
                     .serialize_request(&private_key)
                     .context("failed to serializer csr")?;
 
