@@ -74,7 +74,7 @@ jobs:
   manifest-prepare:
     needs:
       - build-amd64
-      - build-arm
+      - build-arm64
     runs-on: ubuntu-latest
     permissions:
         contents: read
