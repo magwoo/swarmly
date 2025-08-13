@@ -112,12 +112,12 @@ impl<P: ConfigProvider + Send + Sync + 'static> TlsResolverInner<P> {
             .acme_resolver
             .issue_cert(domain, channel)
             .await
-            .with_context(|| format!("failed to issue domain({})", domain))?;
+            .with_context(|| format!("failed to issue domain({domain})"))?;
 
         self.storage
             .set(domain, cert)
             .await
-            .with_context(|| format!("failed to save domain({})", domain))?;
+            .with_context(|| format!("failed to save domain({domain})"))?;
 
         Ok(())
     }

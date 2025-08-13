@@ -35,7 +35,7 @@ impl TlsStorage {
 
         let is_exists = tokio::fs::try_exists(&path)
             .await
-            .with_context(|| format!("failed to check is cert exists, path: {}", path))?;
+            .with_context(|| format!("failed to check is cert exists, path: {path}"))?;
 
         Ok(is_exists)
     }

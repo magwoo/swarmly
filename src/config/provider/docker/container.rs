@@ -24,7 +24,7 @@ impl Container {
         };
 
         let ip_addr = IpAddr::from_str(ip_addr)
-            .with_context(|| format!("failed to parse {} as ip addr", ip_addr))?;
+            .with_context(|| format!("failed to parse {ip_addr} as ip addr"))?;
 
         Ok(Self {
             id,

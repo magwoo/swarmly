@@ -1,14 +1,14 @@
-use config::ConfigRefresher;
-use config::provider::docker::DockerConfig;
 use pingora::prelude::*;
 use pingora::services::listening::Service;
-use tls::TlsResolver;
 use tracing::Level;
 use tracing_subscriber::FmtSubscriber;
 
+use self::config::ConfigRefresher;
+use self::config::provider::docker::DockerConfig;
 use self::proxy::Gateway;
 use self::proxy::SwarmProxy;
 use self::tls::AcmeChallengeService;
+use self::tls::TlsResolver;
 
 mod config;
 mod proxy;
