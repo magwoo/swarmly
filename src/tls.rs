@@ -35,7 +35,7 @@ struct TlsResolverInner<P> {
 }
 
 impl<P: ConfigProvider + Send + Sync + 'static> TlsResolver<P> {
-    pub fn new(
+    pub async fn new(
         provider: P,
         service: AcmeChallengeService,
         redis: Option<RedisClient>,
@@ -46,9 +46,7 @@ impl<P: ConfigProvider + Send + Sync + 'static> TlsResolver<P> {
                 None => return Ok(None),
             };
 
-        let inner = tokio::runtime::Handle::current().block_on(async {
-            TlsResolverInner::new(provider, service, acme_resolver, redis).await
-        })?;
+        let inner = TlsResolverInner::new(provider, service, acme_resolver, redis).await?;
 
         let inner = Arc::new(Mutex::new(inner));
         let instance = Self { inner };

@@ -22,28 +22,37 @@ fn main() {
 
     tracing::subscriber::set_global_default(subscriber).unwrap();
 
-    // Connect to Redis if REDIS_URL is set; otherwise use filesystem storage.
-    let redis = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("failed to build tokio runtime for init")
-        .block_on(redis::RedisClient::from_env())
-        .expect("failed to connect to redis");
-
-    if redis.is_some() {
-        tracing::info!("redis connected — using distributed mode");
-    } else {
-        tracing::info!("no REDIS_URL set — using local filesystem storage");
-    }
-
     let mut server = Server::new(None).unwrap();
 
     let gateway = Gateway::default();
     let config_provider = DockerConfig::new().unwrap();
-    let acme_challenge = AcmeChallengeService::new(redis.clone());
 
+    let (redis, tls_resolver) = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("failed to build tokio runtime for init")
+        .block_on(async {
+            let redis = redis::RedisClient::from_env()
+                .await
+                .expect("failed to connect to redis");
+
+            if redis.is_some() {
+                tracing::info!("redis connected — using distributed mode");
+            } else {
+                tracing::info!("no REDIS_URL set — using local filesystem storage");
+            }
+
+            let acme_challenge_inner = AcmeChallengeService::new(redis.clone());
+            let tls_resolver = TlsResolver::new(config_provider.clone(), acme_challenge_inner, redis.clone())
+                .await
+                .expect("failed to create tls resolver");
+
+            (redis, tls_resolver)
+        });
+
+    let acme_challenge = AcmeChallengeService::new(redis.clone());
     let mut acme_challenge_service =
-        Service::new("acme challenge service".to_string(), acme_challenge.clone());
+        Service::new("acme challenge service".to_string(), acme_challenge);
 
     acme_challenge_service.add_tcp("0.0.0.0:7765");
 
@@ -56,9 +65,7 @@ fn main() {
 
     proxy_service.add_tcp("0.0.0.0:80");
 
-    if let Some(tls_resolver) =
-        TlsResolver::new(config_provider.clone(), acme_challenge, redis).unwrap()
-    {
+    if let Some(tls_resolver) = tls_resolver {
         proxy_service.add_tls_with_settings("0.0.0.0:443", None, tls_resolver.as_tls_settings());
     }
 
