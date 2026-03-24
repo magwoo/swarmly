@@ -47,6 +47,15 @@ impl Certificate {
         buf.into_inner().expect("we use simply vector")
     }
 
+    pub fn is_expiring(&self) -> bool {
+        const RENEWAL_AFTER_SECS: u64 = 60 * 24 * 3600; // renew after 60 days
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        now.saturating_sub(self.order_timestamp) >= RENEWAL_AFTER_SECS
+    }
+
     pub fn from_bytes(buf: &[u8]) -> anyhow::Result<Self> {
         if buf.len() < 24 {
             anyhow::bail!("buffer too short for read head")

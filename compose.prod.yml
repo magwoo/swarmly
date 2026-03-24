@@ -1,14 +1,35 @@
 services:
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    networks:
+      - proxy-network
+    deploy:
+      placement:
+        constraints:
+          - node.role == manager
+
   proxy:
-    build:
-      dockerfile: docker/Dockerfile.prod
+    image: ghcr.io/magwoo/swarmly:latest
     ports:
       - 80:80
       - 443:443
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - ACME_PROVIDER=letsencrypt
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - proxy-network
+    depends_on:
+      - redis
+    deploy:
+      replicas: 3
+
+volumes:
+  redis-data:
 
 networks:
   proxy-network:

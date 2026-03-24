@@ -1,9 +1,10 @@
 use anyhow::Context;
 use bollard::Docker;
-use bollard::query_parameters::{InspectContainerOptions, InspectNetworkOptions};
+use bollard::query_parameters::{InspectContainerOptions, InspectNetworkOptions, ListServicesOptions};
 use std::collections::{BTreeSet, HashMap};
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::pin::Pin;
+use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -43,12 +44,92 @@ impl DockerConfig {
             .network_settings
             .context("container does not have network settings")?
             .networks
-            .unwrap_or_else(HashMap::default)
+            .unwrap_or_default()
             .into_values()
             .filter_map(|e| e.network_id)
-            .collect::<Vec<_>>();
+            .collect();
 
         Ok(ids)
+    }
+
+    /// Docker Swarm mode: read labels from services, use VIP addresses.
+    async fn try_swarm_update(&self) -> anyhow::Result<Value> {
+        let network_ids = self.get_current_networks().await?;
+
+        let services = self
+            .client
+            .list_services(None::<ListServicesOptions>)
+            .await
+            .context("failed to list swarm services")?;
+
+        let mut result: HashMap<String, Vec<SocketAddr>> = HashMap::new();
+
+        for service in services {
+            let labels = service
+                .spec
+                .as_ref()
+                .and_then(|s| s.labels.as_ref());
+
+            let labels = match labels {
+                Some(l) => l,
+                None => continue,
+            };
+
+            let domain = match labels.get("proxy.domain") {
+                Some(d) => d.trim().to_owned(),
+                None => continue,
+            };
+
+            let port: u16 = labels
+                .get("proxy.port")
+                .and_then(|p| p.trim().parse().ok())
+                .unwrap_or(80);
+
+            let vips = service
+                .endpoint
+                .as_ref()
+                .and_then(|e| e.virtual_ips.as_ref());
+
+            let addrs: Vec<SocketAddr> = vips
+                .into_iter()
+                .flatten()
+                .filter(|vip| {
+                    vip.network_id
+                        .as_ref()
+                        .map(|id| network_ids.contains(id))
+                        .unwrap_or(false)
+                })
+                .filter_map(|vip| {
+                    vip.addr.as_ref().and_then(|a| parse_vip_ip(a))
+                })
+                .map(|ip| SocketAddr::new(ip, port))
+                .collect();
+
+            if !addrs.is_empty() {
+                result.entry(domain).or_default().extend(addrs);
+            }
+        }
+
+        Ok(result.into_iter().collect())
+    }
+
+    /// Plain Docker mode: enumerate containers in our networks and read their labels.
+    async fn try_container_update(&self) -> anyhow::Result<Value> {
+        let network_ids = self.get_current_networks().await?;
+        let containers = self.get_containers_in_networks(&network_ids).await?;
+
+        let mut result: HashMap<String, Vec<SocketAddr>> = HashMap::new();
+
+        containers.iter().for_each(|c| {
+            let port = c.get_port().unwrap_or(80);
+            let addr = SocketAddr::new(c.get_ip_addr(), port);
+
+            c.get_domains_unchecked().iter().for_each(|d| {
+                result.entry(d.to_owned()).or_default().push(addr);
+            });
+        });
+
+        Ok(result.into_iter().collect())
     }
 
     async fn get_containers_in_networks(
@@ -66,7 +147,7 @@ impl DockerConfig {
 
             let containers = network
                 .containers
-                .unwrap_or_else(HashMap::default)
+                .unwrap_or_default()
                 .into_iter()
                 .filter(|(id, _)| id.len() == 64)
                 .filter_map(|(id, c)| c.ipv4_address.map(|a| (id, a)))
@@ -74,25 +155,28 @@ impl DockerConfig {
                 .collect::<anyhow::Result<Vec<_>>>()
                 .context("failed to check network containers")?;
 
-            unfiltered_containers.extend(containers.into_iter());
+            unfiltered_containers.extend(containers);
         }
 
         let mut filtered_containers = BTreeSet::new();
 
         for mut container in unfiltered_containers {
-            if !container
+            if container
                 .load_config(&self.client)
                 .await
                 .context("failed to load container config")?
             {
-                continue;
+                filtered_containers.insert(container);
             }
-
-            filtered_containers.insert(container);
         }
 
         Ok(filtered_containers)
     }
+}
+
+fn parse_vip_ip(addr: &str) -> Option<IpAddr> {
+    let ip_str = addr.split('/').next()?;
+    IpAddr::from_str(ip_str).ok()
 }
 
 impl ConfigProvider for DockerConfig {
@@ -109,28 +193,16 @@ impl ConfigProvider for DockerConfig {
     }
 
     async fn update(&self) -> anyhow::Result<Value> {
-        let network_ids = self
-            .get_current_networks()
-            .await
-            .context("failed to get current network ids")?;
-
-        let containers = self
-            .get_containers_in_networks(&network_ids)
-            .await
-            .context("failed to get containers from network ids")?;
-
-        let mut result = HashMap::new();
-
-        containers.iter().for_each(|c| {
-            let port = c.get_port().unwrap_or(80);
-            let addr = SocketAddr::new(c.get_ip_addr(), port);
-
-            c.get_domains_unchecked().iter().for_each(|d| {
-                result.entry(d.to_owned()).or_insert(Vec::new()).push(addr);
-            });
-        });
-
-        let value = result.into_iter().collect();
+        let value = match self.try_swarm_update().await {
+            Ok(v) => {
+                tracing::debug!("using docker swarm service discovery");
+                v
+            }
+            Err(err) => {
+                tracing::debug!("swarm unavailable ({}), falling back to container mode", err);
+                self.try_container_update().await?
+            }
+        };
 
         for callback in self.callbacks.read().await.iter() {
             callback(&value).await;

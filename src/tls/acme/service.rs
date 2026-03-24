@@ -3,53 +3,59 @@ use pingora::apps::http_app::ServeHttp;
 use pingora::protocols::http::ServerSession;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::OnceLock;
 use std::time::Duration;
-use tokio::sync::mpsc::Sender;
-use tokio::sync::{RwLock, mpsc};
+use tokio::sync::RwLock;
 
-use super::challenge::AcmeChallenge;
+use crate::redis::RedisClient;
 
-#[derive(Clone, Default)]
+const CHALLENGE_KEY_PREFIX: &str = "swarmly:challenge:";
+const CHALLENGE_TTL_SECS: u64 = 60;
+const MEMORY_CHALLENGE_LIFETIME: Duration = Duration::from_secs(60);
+
+enum ChallengeBackend {
+    Memory(Arc<RwLock<HashMap<String, String>>>),
+    Redis(RedisClient),
+}
+
+#[derive(Clone)]
 pub struct AcmeChallengeService {
-    challenges: Arc<RwLock<HashMap<String, AcmeChallenge>>>,
-    sender: OnceLock<Sender<AcmeChallenge>>,
+    backend: Arc<ChallengeBackend>,
 }
 
 impl AcmeChallengeService {
-    const CHALLENGE_LIFETIME: Duration = Duration::from_secs(30);
-
-    pub fn channel(&self) -> Sender<AcmeChallenge> {
-        if let Some(sender) = self.sender.get() {
-            return sender.clone();
+    pub fn new(redis: Option<RedisClient>) -> Self {
+        let backend = match redis {
+            Some(client) => ChallengeBackend::Redis(client),
+            None => ChallengeBackend::Memory(Arc::new(RwLock::new(HashMap::new()))),
+        };
+        Self {
+            backend: Arc::new(backend),
         }
+    }
 
-        let (sender, mut reciver) = mpsc::channel::<AcmeChallenge>(8);
-
-        let challenges = Arc::clone(&self.challenges);
-        tokio::spawn(async move {
-            while let Some(challenge) = reciver.recv().await {
-                let domain = challenge.domain().to_owned();
-
-                challenges
-                    .write()
+    pub async fn store_challenge(&self, token: &str, proof: &str) -> anyhow::Result<()> {
+        match self.backend.as_ref() {
+            ChallengeBackend::Redis(client) => {
+                let key = challenge_key(token);
+                client
+                    .set(&key, proof.as_bytes().to_vec(), CHALLENGE_TTL_SECS)
                     .await
-                    .insert(domain.to_owned(), challenge);
-
-                let challenges_for_remove = Arc::clone(&challenges);
-                tokio::spawn(async move {
-                    tokio::time::sleep(Self::CHALLENGE_LIFETIME).await;
-
-                    challenges_for_remove.write().await.remove(&domain);
-                });
             }
-        });
+            ChallengeBackend::Memory(map) => {
+                let token = token.to_owned();
+                let proof = proof.to_owned();
+                let map_clone = Arc::clone(map);
 
-        self.sender
-            .set(sender.clone())
-            .expect("cell must be does not initialized");
+                map.write().await.insert(token.clone(), proof);
 
-        sender
+                tokio::spawn(async move {
+                    tokio::time::sleep(MEMORY_CHALLENGE_LIFETIME).await;
+                    map_clone.write().await.remove(&token);
+                });
+
+                Ok(())
+            }
+        }
     }
 }
 
@@ -60,61 +66,36 @@ impl ServeHttp for AcmeChallengeService {
             Response::builder()
                 .status(404)
                 .body(Vec::<u8>::default())
-                .expect("response must be valiable")
-        };
-
-        let uri = &session.req_header().uri;
-
-        let domain = session
-            .get_header("host")
-            .and_then(|h| h.to_str().ok())
-            .or_else(|| uri.host());
-
-        let domain = match domain {
-            Some(domain) => domain,
-            None => return not_found(),
-        };
-
-        let challenges = self.challenges.read().await;
-
-        let challenge = match challenges.get(domain) {
-            Some(challenge) => challenge,
-            None => return not_found(),
+                .expect("response must be valid")
         };
 
         let path = session.req_header().uri.path();
 
-        if path.trim_matches('/') == format!(".well-known/acme-challenge/{}", challenge.token()) {
-            return Response::new(challenge.proof().as_bytes().to_vec());
-        }
+        let token = match path.strip_prefix("/.well-known/acme-challenge/") {
+            Some(t) if !t.is_empty() => t,
+            _ => return not_found(),
+        };
 
-        not_found()
+        match self.backend.as_ref() {
+            ChallengeBackend::Redis(client) => {
+                let key = challenge_key(token);
+                match client.get(&key).await {
+                    Ok(Some(proof)) => Response::new(proof),
+                    Ok(None) => not_found(),
+                    Err(err) => {
+                        tracing::error!("failed to get acme challenge from redis: {err:?}");
+                        not_found()
+                    }
+                }
+            }
+            ChallengeBackend::Memory(map) => match map.read().await.get(token) {
+                Some(proof) => Response::new(proof.as_bytes().to_vec()),
+                None => not_found(),
+            },
+        }
     }
 }
 
-// impl Default for AcmeChallengeService {
-//     fn default() -> Self {
-//         let challenges = Arc::new(RwLock::new(HashMap::default()));
-
-//         let (sender, mut reciver) = mpsc::channel::<AcmeChallenge>(8);
-
-//         let challenges_for_add = Arc::clone(&challenges);
-//         tokio::spawn(async move {
-//             while let Some(challenge) = reciver.recv().await {
-//                 let domain = challenge.domain().to_owned();
-
-//                 let mut challenges = challenges_for_add.write().await;
-//                 challenges.insert(domain.to_owned(), challenge);
-
-//                 let challenges_for_remove = Arc::clone(&challenges_for_add);
-//                 tokio::spawn(async move {
-//                     tokio::time::sleep(Self::CHALLENGE_LIFETIME).await;
-
-//                     challenges_for_remove.write().await.remove(&domain);
-//                 });
-//             }
-//         });
-
-//         Self { challenges, sender }
-//     }
-// }
+fn challenge_key(token: &str) -> String {
+    format!("{}{}", CHALLENGE_KEY_PREFIX, token)
+}

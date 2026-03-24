@@ -1,17 +1,15 @@
 use anyhow::Context;
-use challenge::AcmeChallenge;
 use instant_acme::{
-    Account, ChallengeType, Identifier, LetsEncrypt, NewAccount, NewOrder, OrderStatus,
+    Account, ChallengeType, Identifier, LetsEncrypt, NewAccount, NewOrder, RetryPolicy,
 };
-use rcgen::{DistinguishedName, KeyPair};
 use std::sync::OnceLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tokio::sync::mpsc::Sender;
 
 use super::cert::Certificate;
 
-pub mod challenge;
 pub mod service;
+
+use service::AcmeChallengeService;
 
 #[derive(Clone)]
 pub struct AcmeResolver {
@@ -21,19 +19,20 @@ pub struct AcmeResolver {
 }
 
 impl AcmeResolver {
-    const PASS_CHALLENGE_ATTEMPTS: u32 = 10;
-    const INITIAL_CHALLENGE_TIMEOUT: Duration = Duration::from_millis(250);
+    const CHALLENGE_RETRY_POLICY: RetryPolicy = RetryPolicy::new()
+        .initial_delay(Duration::from_millis(500))
+        .timeout(Duration::from_secs(60));
 
     pub fn from_env() -> anyhow::Result<Option<Self>> {
         let provider = match std::env::var("ACME_PROVIDER") {
-            Ok(provider) => provider.trim().to_lowercase(),
+            Ok(p) => p.trim().to_lowercase(),
             _ => return Ok(None),
         };
 
         let url = match provider.as_ref() {
             "letsencrypt" | "le" => LetsEncrypt::Production.url(),
             "staging-letsencrypt" | "sle" => LetsEncrypt::Staging.url(),
-            anyother => anyother,
+            other => other,
         }
         .to_owned();
 
@@ -51,23 +50,29 @@ impl AcmeResolver {
             return Ok(account);
         }
 
-        let contact = self.contact.as_ref().map(|m| format!("mailto:{m}"));
-        let contact = match contact.as_ref() {
-            Some(contact) => &[contact.as_str()] as &[&str],
+        let contact_str = self.contact.as_ref().map(|m| format!("mailto:{m}"));
+        let contact_arr;
+        let contact: &[&str] = match &contact_str {
+            Some(c) => {
+                contact_arr = [c.as_str()];
+                &contact_arr
+            }
             None => &[],
         };
 
-        let (account, _credentials) = Account::create(
-            &NewAccount {
-                contact,
-                terms_of_service_agreed: true,
-                only_return_existing: false,
-            },
-            &self.url,
-            None,
-        )
-        .await
-        .context("failed to create account")?;
+        let (account, _credentials) = Account::builder()
+            .context("failed to create account builder")?
+            .create(
+                &NewAccount {
+                    contact,
+                    terms_of_service_agreed: true,
+                    only_return_existing: false,
+                },
+                self.url.clone(),
+                None,
+            )
+            .await
+            .context("failed to create acme account")?;
 
         let _ = self.account.set(account);
 
@@ -77,111 +82,70 @@ impl AcmeResolver {
     pub async fn issue_cert<D>(
         &self,
         domain: D,
-        channel: Sender<AcmeChallenge>,
+        service: &AcmeChallengeService,
     ) -> anyhow::Result<Certificate>
     where
         D: Clone + Into<String> + std::fmt::Display,
     {
-        tracing::debug!("ordering domain: {}", domain);
+        tracing::debug!("ordering cert for domain: {}", domain);
 
+        let identifiers = [Identifier::Dns(domain.clone().into())];
         let mut order = self
             .account()
             .await?
-            .new_order(&NewOrder {
-                identifiers: &[Identifier::Dns(domain.clone().into())],
-            })
+            .new_order(&NewOrder::new(&identifiers))
             .await
             .context("failed to create new order")?;
 
-        tracing::debug!("ordering domain: {}", domain);
-
-        let challenges = order
-            .authorizations()
-            .await
-            .context("failed to get authorizations")?
-            .into_iter()
-            .next()
-            .context("missing any authorizations")?
-            .challenges;
-
-        let http_challenge = challenges
-            .into_iter()
-            .find(|c| c.r#type == ChallengeType::Http01)
-            .context("missing http01 challenge")?;
-
-        let proof = order.key_authorization(&http_challenge);
-        let token = http_challenge.token;
-
-        let challenge = AcmeChallenge::new(domain.clone(), token, proof.as_str());
-
-        channel
-            .send(challenge.clone())
-            .await
-            .context("failed to send challenge into channel")?;
-
-        order
-            .set_challenge_ready(&http_challenge.url)
-            .await
-            .context("failed to set challenge as ready for pass")?;
-
-        for attempt in 1..Self::PASS_CHALLENGE_ATTEMPTS + 1 {
-            let timeout = Self::INITIAL_CHALLENGE_TIMEOUT * (attempt);
-            tracing::info!(
-                "acme challenge for domain({}) attempt ({}/{}) waiting: {:?}",
-                domain,
-                attempt,
-                Self::PASS_CHALLENGE_ATTEMPTS,
-                timeout
-            );
-
-            tokio::time::sleep(timeout).await;
-
-            let state = order
-                .refresh()
+        {
+            let mut authorizations = order.authorizations();
+            let mut auth = authorizations
+                .next()
                 .await
-                .context("failed to refresh order state")?;
+                .context("no authorizations in order")?
+                .context("failed to fetch authorization")?;
 
-            if state.status == OrderStatus::Ready {
-                let private_key = KeyPair::generate().context("failed to generate csr keypair")?;
-                let mut params = rcgen::CertificateParams::new(vec![domain.clone().into()])
-                    .context("failed to create csr")?;
+            let mut challenge = auth
+                .challenge(ChallengeType::Http01)
+                .context("missing http01 challenge")?;
 
-                params.distinguished_name = DistinguishedName::new();
+            let token = challenge.token.clone();
+            let proof = challenge.key_authorization().as_str().to_owned();
 
-                let csr = params
-                    .serialize_request(&private_key)
-                    .context("failed to serializer csr")?;
+            service
+                .store_challenge(&token, &proof)
+                .await
+                .context("failed to store acme challenge")?;
 
-                order
-                    .finalize(csr.der())
-                    .await
-                    .context("failed to finalize order")?;
-
-                let cert = loop {
-                    match order
-                        .certificate()
-                        .await
-                        .context("failed to get certificate")?
-                    {
-                        Some(cert) => break cert,
-                        None => tokio::time::sleep(Duration::from_secs(1)).await,
-                    }
-                };
-
-                let pkey = private_key.serialize_pem();
-                let timestamp = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .expect("local time must be higher when unix epoch")
-                    .as_secs();
-
-                return Certificate::new(pkey.as_bytes(), cert.as_bytes(), timestamp)
-                    .context("failed to create certificate");
-            }
+            challenge
+                .set_ready()
+                .await
+                .context("failed to set challenge as ready")?;
         }
 
-        Err(anyhow::anyhow!(
-            "challenge timed out with order status: {:?}",
-            order.state().status
-        ))
+        let status = order
+            .poll_ready(&Self::CHALLENGE_RETRY_POLICY)
+            .await
+            .context("challenge timed out or failed")?;
+
+        tracing::debug!("order status for {}: {:?}", domain, status);
+
+        let pkey_pem = order
+            .finalize()
+            .await
+            .context("failed to finalize order")?;
+
+        let cert_pem = order
+            .poll_certificate(&RetryPolicy::new())
+            .await
+            .context("failed to retrieve certificate")?;
+
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("local time must be later than unix epoch")
+            .as_secs();
+
+        Certificate::new(pkey_pem.as_bytes(), cert_pem.as_bytes(), timestamp)
+            .context("failed to create certificate")
     }
 }

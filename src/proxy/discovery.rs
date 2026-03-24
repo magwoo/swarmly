@@ -25,7 +25,7 @@ impl ServiceDiscovery for PingDiscovery {
             let socket = match TcpSocket::new_v4() {
                 Ok(socket) => socket,
                 Err(err) => {
-                    println!("failed to create tcp socket: {err:?}");
+                    tracing::warn!("failed to create tcp socket: {err:?}");
                     continue;
                 }
             };
@@ -43,7 +43,7 @@ impl ServiceDiscovery for PingDiscovery {
 
         timings.sort_by(|(_, a), (_, b)| a.cmp(b));
 
-        println!("discovery results: {:?}", timings);
+        tracing::debug!("discovery results: {:?}", timings);
 
         timings.truncate(1);
 

@@ -1,29 +1,40 @@
 use anyhow::Context;
 use std::collections::HashMap;
-use std::collections::hash_map::Entry;
 
 use super::cert::Certificate;
+use crate::redis::RedisClient;
+
+enum Backend {
+    Filesystem(String),
+    Redis(RedisClient),
+}
 
 pub struct TlsStorage {
     cache: HashMap<String, Certificate>,
-    data_dir: String,
+    backend: Backend,
 }
 
 impl TlsStorage {
-    const DEFAULT_DATA_DIR: &str = "/data";
+    const DEFAULT_DATA_DIR: &str = "/opt/swarmly/certs";
+    const CERT_KEY_PREFIX: &str = "swarmly:cert:";
+    const CERT_TTL_SECS: u64 = 80 * 24 * 3600;
 
-    pub fn new(data_path: impl Into<String>) -> Self {
-        Self {
-            data_dir: data_path.into(),
-            ..Default::default()
+    pub fn from_env(redis: Option<RedisClient>) -> Self {
+        match redis {
+            Some(client) => Self {
+                cache: HashMap::new(),
+                backend: Backend::Redis(client),
+            },
+            None => {
+                let dir = std::env::var("DATA_DIR")
+                    .unwrap_or_else(|_| Self::DEFAULT_DATA_DIR.to_owned());
+                let dir = dir.trim().trim_end_matches('/').to_owned();
+                Self {
+                    cache: HashMap::new(),
+                    backend: Backend::Filesystem(dir),
+                }
+            }
         }
-    }
-
-    pub fn from_env() -> anyhow::Result<Self> {
-        let data_dir = std::env::var("DATA_DIR").unwrap_or(Self::DEFAULT_DATA_DIR.to_owned());
-        let data_dir = data_dir.trim().trim_end_matches("/").to_owned();
-
-        Ok(Self::new(data_dir))
     }
 
     pub async fn is_exists(&self, domain: &str) -> anyhow::Result<bool> {
@@ -31,58 +42,84 @@ impl TlsStorage {
             return Ok(true);
         }
 
-        let path = self.cert_path(domain);
-
-        let is_exists = tokio::fs::try_exists(&path)
-            .await
-            .with_context(|| format!("failed to check is cert exists, path: {path}"))?;
-
-        Ok(is_exists)
+        match &self.backend {
+            Backend::Filesystem(dir) => {
+                let path = cert_path(dir, domain);
+                tokio::fs::try_exists(&path)
+                    .await
+                    .with_context(|| format!("failed to check cert at {path}"))
+            }
+            Backend::Redis(client) => {
+                let key = format!("{}{}", Self::CERT_KEY_PREFIX, domain);
+                Ok(client.get(&key).await?.is_some())
+            }
+        }
     }
 
     pub async fn set(&mut self, domain: &str, cert: Certificate) -> anyhow::Result<()> {
-        let path = self.cert_path(domain);
         let bytes = cert.to_bytes();
 
-        tokio::fs::write(path, bytes)
-            .await
-            .context("failed to save cert to file")?;
+        match &self.backend {
+            Backend::Filesystem(dir) => {
+                let path = cert_path(dir, domain);
+                tokio::fs::create_dir_all(dir)
+                    .await
+                    .context("failed to create certs directory")?;
+                tokio::fs::write(&path, &bytes)
+                    .await
+                    .context("failed to save cert to file")?;
+            }
+            Backend::Redis(client) => {
+                let key = format!("{}{}", Self::CERT_KEY_PREFIX, domain);
+                client
+                    .set(&key, bytes, Self::CERT_TTL_SECS)
+                    .await
+                    .context("failed to save cert to redis")?;
+            }
+        }
 
         self.cache.insert(domain.to_owned(), cert);
 
         Ok(())
     }
 
-    pub async fn get(&mut self, domain: &str) -> anyhow::Result<Option<&Certificate>> {
-        let path = self.cert_path(domain);
-
-        match self.cache.entry(domain.to_owned()) {
-            Entry::Occupied(entry) => Ok(Some(entry.into_mut())),
-            Entry::Vacant(entry) => {
-                let cert_bytes = match tokio::fs::read(&path).await {
-                    Ok(bytes) => bytes,
-                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-                    Err(err) => anyhow::bail!("failed to read cert file, err: {err:?}"),
-                };
-
-                let cert = Certificate::from_bytes(&cert_bytes)
-                    .context("failed to parse cert from bytes")?;
-
-                Ok(Some(entry.insert(cert)))
-            }
+    pub async fn needs_renewal(&mut self, domain: &str) -> anyhow::Result<bool> {
+        match self.get(domain).await? {
+            Some(cert) => Ok(cert.is_expiring()),
+            None => Ok(true),
         }
     }
 
-    fn cert_path(&self, domain: &str) -> String {
-        format!("{}/{}.cert", self.data_dir, domain)
+    pub async fn get(&mut self, domain: &str) -> anyhow::Result<Option<&Certificate>> {
+        if self.cache.contains_key(domain) {
+            return Ok(self.cache.get(domain));
+        }
+
+        let bytes = match &self.backend {
+            Backend::Filesystem(dir) => {
+                let path = cert_path(dir, domain);
+                match tokio::fs::read(&path).await {
+                    Ok(b) => b,
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+                    Err(e) => anyhow::bail!("failed to read cert file: {e:?}"),
+                }
+            }
+            Backend::Redis(client) => {
+                let key = format!("{}{}", Self::CERT_KEY_PREFIX, domain);
+                match client.get(&key).await? {
+                    Some(b) => b,
+                    None => return Ok(None),
+                }
+            }
+        };
+
+        let cert = Certificate::from_bytes(&bytes).context("failed to parse certificate")?;
+        self.cache.insert(domain.to_owned(), cert);
+
+        Ok(self.cache.get(domain))
     }
 }
 
-impl Default for TlsStorage {
-    fn default() -> Self {
-        TlsStorage {
-            cache: HashMap::new(),
-            data_dir: Self::DEFAULT_DATA_DIR.to_owned(),
-        }
-    }
+fn cert_path(dir: &str, domain: &str) -> String {
+    format!("{}/{}.cert", dir, domain)
 }
