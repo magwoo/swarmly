@@ -13,6 +13,7 @@ pub struct Container {
 
 pub struct Config {
     port: Option<u16>,
+    tls: bool,
     domains: Vec<String>,
 }
 
@@ -49,6 +50,10 @@ impl Container {
         self.config.as_ref().and_then(|c| c.port)
     }
 
+    pub fn get_tls(&self) -> bool {
+        self.config.as_ref().map(|c| c.tls).unwrap_or(false)
+    }
+
     pub async fn load_config(&mut self, client: &Docker) -> anyhow::Result<bool> {
         let inspect = client
             .inspect_container(&self.id, None::<InspectContainerOptions>)
@@ -72,22 +77,28 @@ impl Container {
 
 impl Config {
     pub fn from_labels(labels: HashMap<String, String>) -> anyhow::Result<Option<Self>> {
-        let domain = match labels.get("proxy.domain").map(|d| d.trim()) {
+        let domain = match labels.get("swarmly.domain").map(|d| d.trim()) {
             Some(d) if !d.is_empty() => d.to_owned(),
             _ => return Ok(None),
         };
 
-        let port = match labels.get("proxy.port") {
+        let port = match labels.get("swarmly.port") {
             Some(port) => Some(
-                u16::from_str(port)
+                u16::from_str(port.trim())
                     .with_context(|| format!("failed to parse port {port} as u16"))?,
             ),
             None => None,
         };
 
+        let tls = labels
+            .get("swarmly.tls")
+            .map(|v| v.trim() == "true")
+            .unwrap_or(false);
+
         Ok(Some(Self {
             domains: vec![domain],
             port,
+            tls,
         }))
     }
 }

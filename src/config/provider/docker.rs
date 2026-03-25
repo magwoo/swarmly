@@ -10,7 +10,7 @@ use std::str::FromStr;
 use std::sync::{Arc, RwLock};
 
 use self::container::Container;
-use super::{ConfigProvider, Value};
+use super::{ConfigProvider, ServiceConfig, Value};
 
 mod container;
 
@@ -62,7 +62,7 @@ impl DockerConfig {
             .await
             .context("failed to list swarm services")?;
 
-        let mut result: HashMap<String, Vec<SocketAddr>> = HashMap::new();
+        let mut result: HashMap<String, (Vec<SocketAddr>, bool)> = HashMap::new();
 
         for service in services {
             let labels = service.spec.as_ref().and_then(|s| s.labels.as_ref());
@@ -72,15 +72,20 @@ impl DockerConfig {
                 None => continue,
             };
 
-            let domain = match labels.get("proxy.domain").map(|d| d.trim()) {
+            let domain = match labels.get("swarmly.domain").map(|d| d.trim()) {
                 Some(d) if !d.is_empty() => d.to_owned(),
                 _ => continue,
             };
 
             let port: u16 = labels
-                .get("proxy.port")
+                .get("swarmly.port")
                 .and_then(|p| p.trim().parse().ok())
                 .unwrap_or(80);
+
+            let tls = labels
+                .get("swarmly.tls")
+                .map(|v| v.trim() == "true")
+                .unwrap_or(false);
 
             let vips = service
                 .endpoint
@@ -101,29 +106,38 @@ impl DockerConfig {
                 .collect();
 
             if !addrs.is_empty() {
-                result.entry(domain).or_default().extend(addrs);
+                let entry = result.entry(domain).or_insert((Vec::new(), tls));
+                entry.0.extend(addrs);
             }
         }
 
-        Ok(result.into_iter().collect())
+        Ok(result
+            .into_iter()
+            .map(|(domain, (addrs, tls))| (domain, ServiceConfig { addrs, tls }))
+            .collect())
     }
 
     async fn try_container_update(&self) -> anyhow::Result<Value> {
         let network_ids = self.get_current_networks().await?;
         let containers = self.get_containers_in_networks(&network_ids).await?;
 
-        let mut result: HashMap<String, Vec<SocketAddr>> = HashMap::new();
+        let mut result: HashMap<String, (Vec<SocketAddr>, bool)> = HashMap::new();
 
         containers.iter().for_each(|c| {
             let port = c.get_port().unwrap_or(80);
             let addr = SocketAddr::new(c.get_ip_addr(), port);
+            let tls = c.get_tls();
 
             c.get_domains_unchecked().iter().for_each(|d| {
-                result.entry(d.to_owned()).or_default().push(addr);
+                let entry = result.entry(d.to_owned()).or_insert((Vec::new(), tls));
+                entry.0.push(addr);
             });
         });
 
-        Ok(result.into_iter().collect())
+        Ok(result
+            .into_iter()
+            .map(|(domain, (addrs, tls))| (domain, ServiceConfig { addrs, tls }))
+            .collect())
     }
 
     async fn get_containers_in_networks(

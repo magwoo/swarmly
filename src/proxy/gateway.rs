@@ -1,11 +1,11 @@
 use pingora::lb::selection::RoundRobin;
 use pingora::lb::{Backend, Backends};
 use std::collections::HashMap;
-use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use super::discovery::PingDiscovery;
+use crate::config::provider::Value;
 
 type LoadBalancer = pingora::lb::LoadBalancer<RoundRobin>;
 
@@ -15,28 +15,28 @@ pub struct Gateway {
 }
 
 impl Gateway {
-    pub async fn update(&self, upstreams: Vec<(String, Vec<SocketAddr>)>) {
-        let mut lb_by_domain = HashMap::new();
+    pub async fn update(&self, upstreams: Value) {
+        let mut entries = HashMap::new();
 
-        upstreams.into_iter().for_each(|(domain, addrs)| {
-            let discovery = PingDiscovery::new(addrs);
+        for (domain, config) in upstreams {
+            let discovery = PingDiscovery::new(config.addrs);
             let backends = Backends::new(Box::new(discovery));
             let lb = LoadBalancer::from_backends(backends);
 
-            lb_by_domain.insert(domain, lb);
-        });
+            entries.insert(domain, (lb, config.tls));
+        }
 
-        for (domain, lb) in lb_by_domain.iter() {
+        for (domain, (lb, _)) in entries.iter() {
             if let Err(err) = lb.update().await {
                 tracing::warn!("failed to update backends for {domain}: {err:?}");
             }
         }
 
         let mut inner = self.inner.write().await;
-        inner.update(lb_by_domain);
+        inner.entries = entries;
     }
 
-    pub async fn process(&self, domain: &str) -> Option<Backend> {
+    pub async fn process(&self, domain: &str) -> Option<(Backend, bool)> {
         let inner = self.inner.read().await;
         inner.process(domain)
     }
@@ -44,17 +44,13 @@ impl Gateway {
 
 #[derive(Default)]
 struct GatewayInner {
-    lb_by_domain: HashMap<String, LoadBalancer>,
+    entries: HashMap<String, (LoadBalancer, bool)>,
 }
 
 impl GatewayInner {
-    pub fn update(&mut self, lb_by_domain: HashMap<String, LoadBalancer>) {
-        self.lb_by_domain = lb_by_domain;
-    }
-
-    pub fn process(&self, domain: &str) -> Option<Backend> {
-        let lb = self.lb_by_domain.get(domain)?;
-
-        lb.select(b"", 64)
+    pub fn process(&self, domain: &str) -> Option<(Backend, bool)> {
+        let (lb, tls) = self.entries.get(domain)?;
+        let backend = lb.select(b"", 64)?;
+        Some((backend, *tls))
     }
 }

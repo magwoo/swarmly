@@ -15,6 +15,8 @@ mod gateway;
 
 pub struct ProxyCtx {
     upstream: Option<SocketAddr>,
+    upstream_tls: bool,
+    upstream_sni: String,
     start: Instant,
 }
 
@@ -39,6 +41,8 @@ impl ProxyHttp for SwarmProxy {
     fn new_ctx(&self) -> Self::CTX {
         ProxyCtx {
             upstream: None,
+            upstream_tls: false,
+            upstream_sni: String::new(),
             start: Instant::now(),
         }
     }
@@ -110,15 +114,21 @@ impl ProxyHttp for SwarmProxy {
             }
         };
 
-        let upstream = match self.gateway.process(domain).await {
-            Some(backend) => backend.addr,
+        let (backend, tls) = match self.gateway.process(domain).await {
+            Some(result) => result,
             None => {
                 session.respond_error(404).await?;
                 return Ok(true);
             }
         };
 
-        ctx.upstream = Some(upstream);
+        ctx.upstream = Some(backend.addr);
+        ctx.upstream_tls = tls;
+        ctx.upstream_sni = if tls {
+            domain.to_owned()
+        } else {
+            String::new()
+        };
 
         Ok(false)
     }
@@ -129,7 +139,11 @@ impl ProxyHttp for SwarmProxy {
         ctx: &mut Self::CTX,
     ) -> Result<Box<HttpPeer>> {
         let upstream = ctx.upstream.as_ref().expect("upstream must be selected");
-        Ok(Box::new(HttpPeer::new(upstream, false, String::default())))
+        Ok(Box::new(HttpPeer::new(
+            upstream,
+            ctx.upstream_tls,
+            ctx.upstream_sni.clone(),
+        )))
     }
 
     async fn logging(

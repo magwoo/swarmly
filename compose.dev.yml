@@ -20,7 +20,8 @@ services:
   api:
     image: caddy:2-alpine
     labels:
-      - proxy.domain=app.ru
+      - swarmly.domain=app.local
+      - swarmly.port=80
     deploy:
       replicas: 3
 
