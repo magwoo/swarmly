@@ -50,7 +50,7 @@ impl<P: ConfigProvider + Send + Sync + 'static> TlsResolver<P> {
 
         let inner = Arc::new(Mutex::new(inner));
         let instance = Self { inner };
-        instance.connect_config_callback();
+        instance.connect_config_callback().await;
 
         Ok(Some(instance))
     }
@@ -65,12 +65,12 @@ impl<P: ConfigProvider + Send + Sync + 'static> TlsResolver<P> {
         settings
     }
 
-    fn connect_config_callback(&self) {
+    async fn connect_config_callback(&self) {
         let inner = self.inner.clone();
 
         self.inner
-            .try_lock()
-            .expect("mutex must be available during init")
+            .lock()
+            .await
             .provider()
             .set_update_callback(move |value| {
                 let inner = inner.clone();

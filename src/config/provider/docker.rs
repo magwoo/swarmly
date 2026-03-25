@@ -5,8 +5,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::net::{IpAddr, SocketAddr};
 use std::pin::Pin;
 use std::str::FromStr;
-use std::sync::Arc;
-use tokio::sync::RwLock;
+use std::sync::{Arc, RwLock};
 
 use self::container::Container;
 use super::{ConfigProvider, Value};
@@ -189,7 +188,7 @@ impl ConfigProvider for DockerConfig {
             Box::pin(callback(value.clone())) as Pin<Box<dyn Future<Output = ()> + Send>>
         });
 
-        self.callbacks.blocking_write().push(boxed);
+        self.callbacks.write().unwrap().push(boxed);
     }
 
     async fn update(&self) -> anyhow::Result<Value> {
@@ -204,8 +203,12 @@ impl ConfigProvider for DockerConfig {
             }
         };
 
-        for callback in self.callbacks.read().await.iter() {
-            callback(&value).await;
+        let futures: Vec<_> = self.callbacks.read().unwrap().iter()
+            .map(|cb| cb(&value))
+            .collect();
+
+        for fut in futures {
+            fut.await;
         }
 
         Ok(value)
