@@ -132,7 +132,12 @@ impl ProxyHttp for SwarmProxy {
         Ok(Box::new(HttpPeer::new(upstream, false, String::default())))
     }
 
-    async fn logging(&self, session: &mut Session, _e: Option<&pingora::Error>, ctx: &mut Self::CTX) {
+    async fn logging(
+        &self,
+        session: &mut Session,
+        _e: Option<&pingora::Error>,
+        ctx: &mut Self::CTX,
+    ) {
         let req = session.req_header();
         let method = req.method.as_str();
         let host = req
@@ -154,7 +159,12 @@ impl ProxyHttp for SwarmProxy {
 
         tracing::info!(
             "{} \"{} {} {}\" {} {}ms",
-            client, method, host, path, status, latency_ms
+            client,
+            method,
+            host,
+            path,
+            status,
+            latency_ms
         );
     }
 }

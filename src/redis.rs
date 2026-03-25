@@ -29,7 +29,9 @@ impl RedisClient {
 
     pub async fn set(&self, key: &str, value: Vec<u8>, ttl_secs: u64) -> anyhow::Result<()> {
         let mut conn = self.manager.clone();
-        conn.set_ex(key, value, ttl_secs).await.context("redis SET EX failed")
+        conn.set_ex(key, value, ttl_secs)
+            .await
+            .context("redis SET EX failed")
     }
 
     pub async fn set_nx(&self, key: &str, value: Vec<u8>, ttl_secs: u64) -> anyhow::Result<bool> {

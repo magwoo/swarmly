@@ -43,9 +43,10 @@ fn main() {
             }
 
             let acme_challenge_inner = AcmeChallengeService::new(redis.clone());
-            let tls_resolver = TlsResolver::new(config_provider.clone(), acme_challenge_inner, redis.clone())
-                .await
-                .expect("failed to create tls resolver");
+            let tls_resolver =
+                TlsResolver::new(config_provider.clone(), acme_challenge_inner, redis.clone())
+                    .await
+                    .expect("failed to create tls resolver");
 
             (redis, tls_resolver)
         });

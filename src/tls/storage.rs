@@ -26,8 +26,8 @@ impl TlsStorage {
                 backend: Backend::Redis(client),
             },
             None => {
-                let dir = std::env::var("DATA_DIR")
-                    .unwrap_or_else(|_| Self::DEFAULT_DATA_DIR.to_owned());
+                let dir =
+                    std::env::var("DATA_DIR").unwrap_or_else(|_| Self::DEFAULT_DATA_DIR.to_owned());
                 let dir = dir.trim().trim_end_matches('/').to_owned();
                 Self {
                     cache: HashMap::new(),
@@ -78,7 +78,10 @@ impl TlsStorage {
         Ok(self.cache.get(domain))
     }
 
-    pub async fn fetch_from_backend(&mut self, domain: &str) -> anyhow::Result<Option<&Certificate>> {
+    pub async fn fetch_from_backend(
+        &mut self,
+        domain: &str,
+    ) -> anyhow::Result<Option<&Certificate>> {
         let bytes = match &self.backend {
             Backend::Filesystem(dir) => {
                 let path = cert_path(dir, domain);

@@ -130,10 +130,7 @@ impl AcmeResolver {
 
         tracing::debug!("order status for {}: {:?}", domain, status);
 
-        let pkey_pem = order
-            .finalize()
-            .await
-            .context("failed to finalize order")?;
+        let pkey_pem = order.finalize().await.context("failed to finalize order")?;
 
         let cert_pem = order
             .poll_certificate(&RetryPolicy::new())

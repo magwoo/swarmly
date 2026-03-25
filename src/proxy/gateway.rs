@@ -26,8 +26,10 @@ impl Gateway {
             lb_by_domain.insert(domain, lb);
         });
 
-        for lb in lb_by_domain.values() {
-            let _ = lb.update().await;
+        for (domain, lb) in lb_by_domain.iter() {
+            if let Err(err) = lb.update().await {
+                tracing::warn!("failed to update backends for {domain}: {err:?}");
+            }
         }
 
         let mut inner = self.inner.write().await;

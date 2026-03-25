@@ -1,6 +1,8 @@
 use anyhow::Context;
 use bollard::Docker;
-use bollard::query_parameters::{InspectContainerOptions, InspectNetworkOptions, ListServicesOptions};
+use bollard::query_parameters::{
+    InspectContainerOptions, InspectNetworkOptions, ListServicesOptions,
+};
 use std::collections::{BTreeSet, HashMap};
 use std::net::{IpAddr, SocketAddr};
 use std::pin::Pin;
@@ -63,19 +65,16 @@ impl DockerConfig {
         let mut result: HashMap<String, Vec<SocketAddr>> = HashMap::new();
 
         for service in services {
-            let labels = service
-                .spec
-                .as_ref()
-                .and_then(|s| s.labels.as_ref());
+            let labels = service.spec.as_ref().and_then(|s| s.labels.as_ref());
 
             let labels = match labels {
                 Some(l) => l,
                 None => continue,
             };
 
-            let domain = match labels.get("proxy.domain") {
-                Some(d) => d.trim().to_owned(),
-                None => continue,
+            let domain = match labels.get("proxy.domain").map(|d| d.trim()) {
+                Some(d) if !d.is_empty() => d.to_owned(),
+                _ => continue,
             };
 
             let port: u16 = labels
@@ -97,9 +96,7 @@ impl DockerConfig {
                         .map(|id| network_ids.contains(id))
                         .unwrap_or(false)
                 })
-                .filter_map(|vip| {
-                    vip.addr.as_ref().and_then(|a| parse_vip_ip(a))
-                })
+                .filter_map(|vip| vip.addr.as_ref().and_then(|a| parse_vip_ip(a)))
                 .map(|ip| SocketAddr::new(ip, port))
                 .collect();
 
@@ -196,12 +193,19 @@ impl ConfigProvider for DockerConfig {
                 v
             }
             Err(err) => {
-                tracing::debug!("swarm unavailable ({}), falling back to container mode", err);
+                tracing::debug!(
+                    "swarm unavailable ({}), falling back to container mode",
+                    err
+                );
                 self.try_container_update().await?
             }
         };
 
-        let futures: Vec<_> = self.callbacks.read().unwrap().iter()
+        let futures: Vec<_> = self
+            .callbacks
+            .read()
+            .unwrap()
+            .iter()
             .map(|cb| cb(&value))
             .collect();
 

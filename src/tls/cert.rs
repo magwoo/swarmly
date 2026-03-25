@@ -75,8 +75,8 @@ impl Certificate {
         if buf.len() != overall_len {
             anyhow::bail!(
                 "unexpected buffer len, expected: {}, current: {}",
-                buf.len(),
-                overall_len
+                overall_len,
+                buf.len()
             )
         }
 

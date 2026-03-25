@@ -57,7 +57,7 @@ impl Container {
 
         let labels = inspect
             .config
-            .context("container does not has config")?
+            .context("container does not have config")?
             .labels
             .unwrap_or_else(HashMap::default);
 
@@ -72,9 +72,9 @@ impl Container {
 
 impl Config {
     pub fn from_labels(labels: HashMap<String, String>) -> anyhow::Result<Option<Self>> {
-        let domain = match labels.get("proxy.domain") {
-            Some(domain) => domain.trim().to_owned(),
-            None => return Ok(None),
+        let domain = match labels.get("proxy.domain").map(|d| d.trim()) {
+            Some(d) if !d.is_empty() => d.to_owned(),
+            _ => return Ok(None),
         };
 
         let port = match labels.get("proxy.port") {

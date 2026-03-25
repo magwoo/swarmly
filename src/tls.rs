@@ -176,7 +176,10 @@ impl<P: ConfigProvider + Send + Sync + 'static> TlsResolverInner<P> {
                 LOCK_TTL_SECS
             );
 
-            let old_timestamp = self.storage.fetch_from_backend(domain).await?
+            let old_timestamp = self
+                .storage
+                .fetch_from_backend(domain)
+                .await?
                 .map(|c| c.order_timestamp());
 
             for attempt in 1..=MAX_POLLS {
@@ -200,10 +203,10 @@ impl<P: ConfigProvider + Send + Sync + 'static> TlsResolverInner<P> {
 #[async_trait::async_trait]
 impl<P: ConfigProvider + Send + Sync> TlsAccept for TlsResolver<P> {
     async fn certificate_callback(&self, ssl: &mut TlsRef) -> () {
-        if let Some(domain) = ssl.servername(NameType::HOST_NAME) {
+        if let Some(domain) = ssl.servername(NameType::HOST_NAME).map(str::to_owned) {
             let mut inner = self.inner.lock().await;
 
-            let cert = match inner.storage.get(domain).await {
+            let cert = match inner.storage.get(&domain).await {
                 Ok(Some(cert)) => cert,
                 Ok(None) => return,
                 Err(err) => {
@@ -215,8 +218,13 @@ impl<P: ConfigProvider + Send + Sync> TlsAccept for TlsResolver<P> {
             let key = cert.private_key();
             let crt = cert.certificate();
 
-            ssl.set_certificate(crt).unwrap();
-            ssl.set_private_key(key).unwrap();
+            if let Err(err) = ssl.set_certificate(crt) {
+                tracing::error!("failed to set certificate for {domain}: {err:?}");
+                return;
+            }
+            if let Err(err) = ssl.set_private_key(key) {
+                tracing::error!("failed to set private key for {domain}: {err:?}");
+            }
         }
     }
 }
