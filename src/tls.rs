@@ -69,7 +69,8 @@ impl<P: ConfigProvider + Send + Sync + 'static> TlsResolver<P> {
         let inner = self.inner.clone();
 
         self.inner
-            .blocking_lock()
+            .try_lock()
+            .expect("mutex must be available during init")
             .provider()
             .set_update_callback(move |value| {
                 let inner = inner.clone();
