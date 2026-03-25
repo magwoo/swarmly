@@ -58,7 +58,6 @@ fn main() {
 
     server.add_service(acme_challenge_service);
 
-    // Determine if TLS will be enabled to configure the HTTP→HTTPS redirect.
     let tls_enabled = std::env::var("ACME_EMAIL").is_ok();
     let proxy = SwarmProxy::new(gateway.clone(), tls_enabled);
     let mut proxy_service = http_proxy_service(&server.configuration, proxy);

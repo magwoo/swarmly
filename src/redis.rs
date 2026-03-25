@@ -8,7 +8,6 @@ pub struct RedisClient {
 }
 
 impl RedisClient {
-    /// Returns `Ok(Some(_))` if `REDIS_URL` is set, `Ok(None)` if not set.
     pub async fn from_env() -> anyhow::Result<Option<Self>> {
         let url = match std::env::var("REDIS_URL") {
             Ok(u) => u,

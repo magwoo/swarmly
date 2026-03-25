@@ -24,6 +24,10 @@ impl Certificate {
         })
     }
 
+    pub fn order_timestamp(&self) -> u64 {
+        self.order_timestamp
+    }
+
     pub fn private_key(&self) -> &PKey<Private> {
         &self.private_key
     }
@@ -48,7 +52,7 @@ impl Certificate {
     }
 
     pub fn is_expiring(&self) -> bool {
-        const RENEWAL_AFTER_SECS: u64 = 60 * 24 * 3600; // renew after 60 days
+        const RENEWAL_AFTER_SECS: u64 = 60 * 24 * 3600;
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())

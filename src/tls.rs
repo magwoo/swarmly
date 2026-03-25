@@ -155,7 +155,11 @@ impl<P: ConfigProvider + Send + Sync + 'static> TlsResolverInner<P> {
             .context("failed to acquire cert issuance lock")?;
 
         if acquired {
-            tracing::info!("node {} acquired cert lock for {}, issuing", self.node_id, domain);
+            tracing::info!(
+                "node {} acquired cert lock for {}, issuing",
+                self.node_id,
+                domain
+            );
 
             let result = self.acme_resolver.issue_cert(domain, &self.service).await;
 
@@ -168,18 +172,22 @@ impl<P: ConfigProvider + Send + Sync + 'static> TlsResolverInner<P> {
         } else {
             tracing::info!(
                 "another node is issuing cert for {}, waiting up to {}s",
-                domain, LOCK_TTL_SECS
+                domain,
+                LOCK_TTL_SECS
             );
+
+            let old_timestamp = self.storage.fetch_from_backend(domain).await?
+                .map(|c| c.order_timestamp());
 
             for attempt in 1..=MAX_POLLS {
                 tokio::time::sleep(POLL_INTERVAL).await;
 
-                match self.storage.is_exists(domain).await {
-                    Ok(true) => {
+                match self.storage.fetch_from_backend(domain).await {
+                    Ok(Some(cert)) if Some(cert.order_timestamp()) != old_timestamp => {
                         tracing::info!("cert for {} available after {} polls", domain, attempt);
                         return Ok(());
                     }
-                    Ok(false) => continue,
+                    Ok(_) => continue,
                     Err(err) => tracing::warn!("error polling for cert {domain}: {err:?}"),
                 }
             }

@@ -37,25 +37,6 @@ impl TlsStorage {
         }
     }
 
-    pub async fn is_exists(&self, domain: &str) -> anyhow::Result<bool> {
-        if self.cache.contains_key(domain) {
-            return Ok(true);
-        }
-
-        match &self.backend {
-            Backend::Filesystem(dir) => {
-                let path = cert_path(dir, domain);
-                tokio::fs::try_exists(&path)
-                    .await
-                    .with_context(|| format!("failed to check cert at {path}"))
-            }
-            Backend::Redis(client) => {
-                let key = format!("{}{}", Self::CERT_KEY_PREFIX, domain);
-                Ok(client.get(&key).await?.is_some())
-            }
-        }
-    }
-
     pub async fn set(&mut self, domain: &str, cert: Certificate) -> anyhow::Result<()> {
         let bytes = cert.to_bytes();
 
@@ -84,17 +65,20 @@ impl TlsStorage {
     }
 
     pub async fn needs_renewal(&mut self, domain: &str) -> anyhow::Result<bool> {
-        match self.get(domain).await? {
+        match self.fetch_from_backend(domain).await? {
             Some(cert) => Ok(cert.is_expiring()),
             None => Ok(true),
         }
     }
 
     pub async fn get(&mut self, domain: &str) -> anyhow::Result<Option<&Certificate>> {
-        if self.cache.contains_key(domain) {
-            return Ok(self.cache.get(domain));
+        if !self.cache.contains_key(domain) {
+            self.fetch_from_backend(domain).await?;
         }
+        Ok(self.cache.get(domain))
+    }
 
+    pub async fn fetch_from_backend(&mut self, domain: &str) -> anyhow::Result<Option<&Certificate>> {
         let bytes = match &self.backend {
             Backend::Filesystem(dir) => {
                 let path = cert_path(dir, domain);

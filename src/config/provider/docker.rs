@@ -51,7 +51,6 @@ impl DockerConfig {
         Ok(ids)
     }
 
-    /// Docker Swarm mode: read labels from services, use VIP addresses.
     async fn try_swarm_update(&self) -> anyhow::Result<Value> {
         let network_ids = self.get_current_networks().await?;
 
@@ -112,7 +111,6 @@ impl DockerConfig {
         Ok(result.into_iter().collect())
     }
 
-    /// Plain Docker mode: enumerate containers in our networks and read their labels.
     async fn try_container_update(&self) -> anyhow::Result<Value> {
         let network_ids = self.get_current_networks().await?;
         let containers = self.get_containers_in_networks(&network_ids).await?;

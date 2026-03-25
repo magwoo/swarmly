@@ -49,7 +49,6 @@ impl ProxyHttp for SwarmProxy {
     {
         let path = session.req_header().uri.path();
 
-        // Forward ACME http-01 challenges to the local challenge service.
         if path.starts_with("/.well-known/acme-challenge/") {
             ctx.upstream = Some(SocketAddr::Inet(
                 std::net::SocketAddr::from_str("127.0.0.1:7765").expect("addr must be valid"),
@@ -57,7 +56,6 @@ impl ProxyHttp for SwarmProxy {
             return Ok(false);
         }
 
-        // Health check — always respond immediately.
         if path == "/health" || path == "/healthz" {
             let mut header = ResponseHeader::build(200, None)?;
             header.insert_header("content-type", "text/plain")?;
@@ -71,7 +69,6 @@ impl ProxyHttp for SwarmProxy {
             return Ok(true);
         }
 
-        // HTTP → HTTPS redirect when TLS is enabled and the connection is plain HTTP.
         if self.tls_enabled {
             let is_tls = session
                 .server_addr()
